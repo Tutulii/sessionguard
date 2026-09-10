@@ -99,6 +99,56 @@ describe("production fail-closed rule boundaries", () => {
     expect(decision.reasonCodes).toEqual(expect.arrayContaining(["EXTENDED_SIZE_CAP", "EARNINGS_SIZE_CAP"]));
   });
 
+  it("surfaces zero spendable balance as the primary blocking rule", async () => {
+    const replay = await market.snapshot("RTSLAUSDT", { mode: "REPLAY", replayId: "extended-tesla", now });
+    const snapshot = { ...replay, spreadBps: 10, offHoursMoveBps: 0 };
+    const portfolio = {
+      ...replayPortfolio(userId),
+      accountEquityCents: 800_000,
+      availableBalanceCents: 0,
+      collateralBufferPct: 0,
+      positions: [],
+      capturedAt: now.toISOString(),
+    };
+    const decision = evaluateProductionGuard({
+      userId, snapshot, portfolio,
+      input: { symbol: "RTSLAUSDT", side: "buy", notionalCents: 25_000, maxSlippageBps: 50,
+        dataMode: "REPLAY", replayId: "extended-tesla", earningsWindow: true },
+      policy: { ...defaultUserPolicy, maxPaperOrderCents: 10_100, extendedSizePct: 14, earningsSizePct: 5 },
+      policyVersion: "custom", dailyUsage: { count: 0, grossNewNotionalCents: 0 }, now,
+    });
+
+    expect(decision).toMatchObject({
+      permission: "BLOCK",
+      allowedNotionalCents: 0,
+      primaryReasonCode: "INSUFFICIENT_AVAILABLE_BALANCE",
+      stressExposureCents: 25_000,
+      availableBalanceCents: 0,
+    });
+    expect(decision.reasonCodes[0]).toBe("INSUFFICIENT_AVAILABLE_BALANCE");
+    expect(decision.ruleResults).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "INSUFFICIENT_AVAILABLE_BALANCE", effect: "BLOCK", scope: "PORTFOLIO" }),
+      expect.objectContaining({ code: "EXTENDED_SIZE_CAP", effect: "CAP" }),
+    ]));
+    expect(decision.gapScenarios.map((item) => item.pnlCents)).toEqual([-750, -2_000, -3_000]);
+  });
+
+  it("caps a buy to a positive spendable balance instead of over-authorizing it", async () => {
+    const snapshot = await market.snapshot("RNVDAUSDT", { mode: "REPLAY", replayId: "cash-nvidia", now });
+    const portfolio = {
+      ...replayPortfolio(userId), availableBalanceCents: 1_000, collateralBufferPct: 100,
+      positions: [], capturedAt: now.toISOString(),
+    };
+    const decision = evaluate(snapshot, portfolio, {
+      symbol: "RNVDAUSDT", side: "buy", notionalCents: 5_000, maxSlippageBps: 50,
+      dataMode: "REPLAY", replayId: "cash-nvidia", earningsWindow: false,
+    });
+
+    expect(decision).toMatchObject({
+      permission: "TRADE", allowedNotionalCents: 1_000, primaryReasonCode: "AVAILABLE_BALANCE_CAP",
+    });
+    expect(decision.reasonCodes[0]).toBe("AVAILABLE_BALANCE_CAP");
+  });
   it("blocks collateral stress and both daily operational limits", async () => {
     const snapshot = await market.snapshot("RORCLUSDT", { mode: "REPLAY", replayId: "sunday-oracle", now });
     const portfolio = { ...replayPortfolio(userId), collateralBufferPct: 16, capturedAt: now.toISOString() };

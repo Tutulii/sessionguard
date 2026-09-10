@@ -9,7 +9,7 @@ import {
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type {
-  AuthenticatedUser, GuardDecision, NotificationChannel, PaperOrderReceiptV1,
+  AuthenticatedUser, GuardDecision, GuardRuleResult, NotificationChannel, PaperOrderReceiptV1,
   PlatformNotification, PortfolioSnapshot, ProductionMarketSnapshot, ProductionSymbol,
   UserPolicy,
 } from "../../shared/production-types";
@@ -43,6 +43,33 @@ function executionLabel(order: PaperOrderReceiptV1 | null) {
 }
 function sessionLabel(session: ProductionMarketSnapshot["session"]) {
   return ({ CASH_OPEN: "CASH OPEN", EXTENDED: "EXTENDED", WEEKEND: "WEEKEND", HOLIDAY: "HOLIDAY", MARKET_UNAVAILABLE: "UNAVAILABLE" })[session];
+}
+
+const legacyBlockingRuleCodes = new Set([
+  "DATA_MODE_MISMATCH", "MARKET_UNAVAILABLE", "STALE_QUOTE", "ANCHOR_MISSING", "STALE_PORTFOLIO",
+  "CASH_MARKET_DARK", "NOT_REDUCE_ONLY", "EXTENDED_DISABLED", "DAILY_ORDER_LIMIT",
+  "DAILY_NOTIONAL_LIMIT", "INSUFFICIENT_AVAILABLE_BALANCE", "COLLATERAL_STRESS", "ZERO_SIZE_CAP",
+]);
+const legacyCapRuleCodes = new Set(["EXTENDED_SIZE_CAP", "EARNINGS_SIZE_CAP", "AVAILABLE_BALANCE_CAP"]);
+
+function decisionRules(decision: GuardDecision): GuardRuleResult[] {
+  if (decision.ruleResults?.length) return decision.ruleResults;
+  return decision.reasonCodes.map((code, index) => {
+    const effect: GuardRuleResult["effect"] = legacyBlockingRuleCodes.has(code)
+      ? "BLOCK"
+      : legacyCapRuleCodes.has(code) ? "CAP" : decision.permission === "ALERT_ONLY" ? "ALERT" : "PASS";
+    return { code, message: decision.reasons[index] ?? code, effect, scope: "ORDER" };
+  });
+}
+
+function primaryRuleForDecision(decision: GuardDecision): GuardRuleResult {
+  const rules = decisionRules(decision);
+  const explicit = decision.primaryReasonCode
+    ? rules.find((rule) => rule.code === decision.primaryReasonCode)
+    : undefined;
+  if (explicit) return { ...explicit, message: decision.primaryReason ?? explicit.message };
+  const target = decision.permission === "BLOCK" ? "BLOCK" : decision.permission === "ALERT_ONLY" ? "ALERT" : undefined;
+  return rules.find((rule) => rule.effect === target) ?? rules[0];
 }
 
 function Pill({ children, tone = "neutral" }: { children: ReactNode; tone?: string }) {
@@ -153,6 +180,8 @@ export function ProductionDashboardPage() {
   const demoTriggerRef = useRef<HTMLButtonElement>(null);
 
   const guardianVerdict = decision?.permission === "ALERT_ONLY" ? "ALERT" : decision?.permission ?? "BLOCK";
+  const renderedRules = decision ? decisionRules(decision) : [];
+  const primaryRule = decision ? primaryRuleForDecision(decision) : null;
   const prefersReducedMotion = typeof window !== "undefined" && typeof window.matchMedia === "function"
     && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const replayLastFrame = Math.max(0, (snapshot?.chart.length ?? 1) - 1);
@@ -268,14 +297,14 @@ export function ProductionDashboardPage() {
   const chooseReplay = (id: string) => {
     const selected = replays.find((item) => item.id === id); if (!selected) return;
     setReplayId(id); setSymbol(selected.symbol as ProductionSymbol); setDecision(null); setError("");
-    setReplayFrame(0); setReplayPlaying(false);
+    setReplayFrame(0); setReplayPlaying(false); setEarningsWindow(false);
     void loadMarket(selected.symbol as ProductionSymbol, "REPLAY", id);
     if (user) void loadPrivate("REPLAY", id);
   };
 
   const chooseMode = (next: DeskMode) => {
     const matchingReplay = next === "REPLAY" ? replays.find((item) => item.symbol === symbol)?.id ?? replayId : replayId;
-    setMode(next); setDecision(null); setError(""); setReplayPlaying(false);
+    setMode(next); setDecision(null); setError(""); setReplayPlaying(false); setEarningsWindow(false);
     if (next === "REPLAY") { setReplayId(matchingReplay); setReplayFrame(0); }
     void loadMarket(symbol, next, matchingReplay);
     if (user) void loadPrivate(next, matchingReplay);
@@ -283,7 +312,7 @@ export function ProductionDashboardPage() {
 
   const selectSymbol = (next: ProductionSymbol) => {
     const matchingReplay = mode === "REPLAY" ? replays.find((item) => item.symbol === next)?.id ?? replayId : replayId;
-    setSymbol(next); setDecision(null); setError(""); setReplayPlaying(false);
+    setSymbol(next); setDecision(null); setError(""); setReplayPlaying(false); setEarningsWindow(false);
     if (mode === "REPLAY") { setReplayId(matchingReplay); setReplayFrame(0); }
     void loadMarket(next, mode, matchingReplay);
     if (user) void loadPrivate(mode, matchingReplay);
@@ -429,14 +458,33 @@ export function ProductionDashboardPage() {
         </section>
       </> : <section className="prod-loading"><LoaderCircle className="spin"/><p>Loading disclosed market source…</p></section>}
 
-      <section className="prod-control-grid" id="guard"><div className="prod-intent"><div className="card-title-row"><div><span className="card-kicker">PAPER INTENT</span><h3>Proposed order</h3></div><Pill>MAX $250</Pill></div><div className="side-switch"><button className={side === "buy" ? "active buy" : ""} onClick={() => setSide("buy")}>Buy / increase</button><button className={side === "sell" ? "active sell" : ""} onClick={() => setSide("sell")}>Sell / reduce</button></div><label className="notional-input"><span>Notional</span><span><i>$</i><input aria-label="Paper order notional" type="number" min="1" max="250" value={notional} onChange={(event) => setNotional(Number(event.target.value))}/><small>USD</small></span></label><label className="prod-check"><input type="checkbox" checked={earningsWindow} onChange={(event) => setEarningsWindow(event.target.checked)}/><span>Earnings risk window</span></label><div className="prod-data-boundary"><ShieldCheck/><span><strong>{mode === "REPLAY" ? "LOCAL REPLAY SIMULATION" : "BITGET DEMO ONLY"}</strong>No live-money route exists.</span></div></div>
-        <div className={`permission-panel prod-permission verdict-${guardianVerdict.toLowerCase()}`}><div className="card-title-row"><div><span className="card-kicker">DETERMINISTIC OUTPUT</span><h3>Permission</h3></div>{decision && <Pill tone={decision.permission === "TRADE" ? "good" : decision.permission === "BLOCK" ? "bad" : "warn"}>{decision.permission}</Pill>}</div>{decision ? <><div className="prod-verdict"><strong>{decision.permission}</strong><span>ALLOWED<b>{dollars(decision.allowedNotionalCents)}</b></span></div><p>{decision.reasons[0]}</p><div className="prod-rule-list">{decision.reasonCodes.slice(0, 5).map((code) => <span key={code}><Check/> {code}</span>)}</div><div className="prod-gap-row">{decision.gapScenarios.map((gap) => <span key={gap.gapPct}><small>{gap.gapPct}% OPEN</small><strong>{dollars(gap.pnlCents)}</strong><em>{gap.projectedCollateralBufferPct}% buffer</em></span>)}</div>{decision.decisionToken && <button className="button button-coral button-full" onClick={() => void execute()} disabled={busy}>{busy ? <LoaderCircle className="spin"/> : <Zap/>}{mode === "REPLAY" ? "Simulate allowed order" : "Submit to Bitget Demo"}</button>}</> : <div className="prod-empty-permission"><Ban/><p>No permission exists yet. The server will fail closed on missing or stale inputs.</p></div>}<button className="button button-ink button-full" onClick={() => void evaluate()} disabled={busy || !snapshot || (mode === "REPLAY" && !replayReady)}>{busy ? <LoaderCircle className="spin"/> : user ? <ShieldCheck/> : <Wallet/>}{mode === "REPLAY" && !replayReady ? "Reach decision point to run guard" : user ? "Run deterministic guard" : "Sign wallet to run guard"}</button></div>
+      <section className="prod-control-grid" id="guard"><div className="prod-intent"><div className="card-title-row"><div><span className="card-kicker">PAPER INTENT</span><h3>Proposed order</h3></div><Pill>MAX $250</Pill></div><div className="side-switch"><button className={side === "buy" ? "active buy" : ""} onClick={() => setSide("buy")}>Buy / increase</button><button className={side === "sell" ? "active sell" : ""} onClick={() => setSide("sell")}>Sell / reduce</button></div><label className="notional-input"><span>Notional</span><span><i>$</i><input aria-label="Paper order notional" type="number" min="1" max="250" value={notional} onChange={(event) => setNotional(Number(event.target.value))}/><small>USD</small></span></label><label className="prod-check"><input type="checkbox" checked={earningsWindow} onChange={(event) => setEarningsWindow(event.target.checked)}/><span>Earnings risk window<small>Manual flag · resets when asset changes</small></span></label><div className="prod-data-boundary"><ShieldCheck/><span><strong>{mode === "REPLAY" ? "LOCAL REPLAY SIMULATION" : "BITGET DEMO ONLY"}</strong>No live-money route exists.</span></div></div>
+        <div className={`permission-panel prod-permission verdict-${guardianVerdict.toLowerCase()}`}>
+          <div className="card-title-row"><div><span className="card-kicker">DETERMINISTIC OUTPUT</span><h3>Permission</h3></div>{decision && <Pill tone={decision.permission === "TRADE" ? "good" : decision.permission === "BLOCK" ? "bad" : "warn"}>{decision.permission}</Pill>}</div>
+          {decision && primaryRule ? <>
+            <div className="prod-verdict"><strong>{decision.permission}</strong><span>ALLOWED<b>{dollars(decision.allowedNotionalCents)}</b></span></div>
+            <div className={`prod-primary-rule effect-${primaryRule.effect.toLowerCase()}`}>
+              <small>PRIMARY {primaryRule.effect} RULE</small>
+              <strong>{primaryRule.code}</strong>
+              <p>{primaryRule.message}</p>
+            </div>
+            <div className="prod-rule-list" aria-label="Evaluated guard rules">{renderedRules.slice(0, 6).map((rule) => <span className={`effect-${rule.effect.toLowerCase()}`} key={rule.code}><b>{rule.effect}</b>{rule.code}</span>)}</div>
+            <div className="prod-stress-context">
+              <strong>Projected {decision.snapshot.displaySymbol} position stress</strong>
+              <span>Based on {dollars(decision.stressExposureCents ?? decision.requestedNotionalCents)} of exposure at this decision. Equal dollar exposure produces equal dollar gap P&amp;L across symbols.</span>
+              {decision.availableBalanceCents !== undefined && <small>Spendable at decision: {dollars(decision.availableBalanceCents)} · Starting buffer: {decision.startingCollateralBufferPct ?? 0}% · Required: {decision.requiredCollateralBufferPct ?? policy.minCollateralBufferPct}%</small>}
+            </div>
+            <div className="prod-gap-row">{decision.gapScenarios.map((gap) => <span key={gap.gapPct}><small>{gap.gapPct}% OPEN</small><strong>{dollars(gap.pnlCents)}</strong><em>{gap.projectedCollateralBufferPct}% projected buffer</em></span>)}</div>
+            {decision.decisionToken && <button className="button button-coral button-full" onClick={() => void execute()} disabled={busy}>{busy ? <LoaderCircle className="spin"/> : <Zap/>}{mode === "REPLAY" ? "Simulate allowed order" : "Submit to Bitget Demo"}</button>}
+          </> : <div className="prod-empty-permission"><Ban/><p>No permission exists yet. The server will fail closed on missing or stale inputs.</p></div>}
+          <button className="button button-ink button-full" onClick={() => void evaluate()} disabled={busy || !snapshot || (mode === "REPLAY" && !replayReady)}>{busy ? <LoaderCircle className="spin"/> : user ? <ShieldCheck/> : <Wallet/>}{mode === "REPLAY" && !replayReady ? "Reach decision point to run guard" : user ? "Run deterministic guard" : "Sign wallet to run guard"}</button>
+        </div>
         <PolicyPanel policy={policy} setPolicy={setPolicy} onSave={() => void savePolicy()} busy={busy}/>
       </section>
 
-      <section className="prod-portfolio"><div className="card-title-row"><div><span className="card-kicker">PORTFOLIO FRESHNESS</span><h3>{mode === "REPLAY" ? "Replay account" : "Bitget Demo account"}</h3></div>{portfolio ? <Pill tone={(Date.now() - new Date(portfolio.capturedAt).getTime()) < 15_000 ? "good" : "bad"}>{time(portfolio.capturedAt)}</Pill> : <Pill tone="warn">WALLET REQUIRED</Pill>}</div>{portfolio ? <><div className="prod-portfolio-grid"><span><small>EQUITY</small><strong>{dollars(portfolio.accountEquityCents)}</strong></span><span><small>AVAILABLE</small><strong>{dollars(portfolio.availableBalanceCents)}</strong></span><span><small>COLLATERAL BUFFER</small><strong>{portfolio.collateralBufferPct}%</strong></span><span><small>OPEN ORDERS</small><strong>{portfolio.openOrderCount}</strong></span></div><div className="prod-positions" aria-label="rToken holdings">{portfolio.positions.length ? portfolio.positions.map((position) => <article key={position.symbol}><span className="asset-monogram">{symbolMetadata[position.symbol].underlyingSymbol.slice(0, 2)}</span><div><strong>{symbolMetadata[position.symbol].displaySymbol}</strong><small>{(position.quantityMicros / 1_000_000).toFixed(4)} tokens</small></div><span><strong>{dollars(position.marketValueCents)}</strong><small>{position.usedAsCollateral ? "COLLATERAL" : "NOT COLLATERAL"}</small></span></article>) : <p>No supported rToken holdings in this account.</p>}</div></> : <p>Sign your wallet to load a tenant-isolated portfolio snapshot.</p>}</section>
+      <section className="prod-portfolio"><div className="card-title-row"><div><span className="card-kicker">PORTFOLIO FRESHNESS</span><h3>{mode === "REPLAY" ? "Replay account" : "Bitget Demo account"}</h3></div>{portfolio ? <Pill tone={(Date.now() - new Date(portfolio.capturedAt).getTime()) < 15_000 ? "good" : "bad"}>{time(portfolio.capturedAt)}</Pill> : <Pill tone="warn">WALLET REQUIRED</Pill>}</div>{portfolio ? <><div className="prod-portfolio-grid"><span><small>EQUITY</small><strong>{dollars(portfolio.accountEquityCents)}</strong></span><span><small>SPENDABLE NOW</small><strong>{dollars(portfolio.availableBalanceCents)}</strong></span><span><small>COLLATERAL BUFFER</small><strong>{portfolio.collateralBufferPct}%</strong></span><span><small>OPEN ORDERS</small><strong>{portfolio.openOrderCount}</strong></span></div><div className="prod-positions" aria-label="rToken holdings">{portfolio.positions.length ? portfolio.positions.map((position) => <article key={position.symbol}><span className="asset-monogram">{symbolMetadata[position.symbol].underlyingSymbol.slice(0, 2)}</span><div><strong>{symbolMetadata[position.symbol].displaySymbol}</strong><small>{(position.quantityMicros / 1_000_000).toFixed(4)} tokens</small></div><span><strong>{dollars(position.marketValueCents)}</strong><small>{position.usedAsCollateral ? "COLLATERAL" : "NOT COLLATERAL"}</small></span></article>) : <p>No supported rToken holdings in this account.</p>}</div></> : <p>Sign your wallet to load a tenant-isolated portfolio snapshot.</p>}</section>
 
-      <section className="decisions-section" id="decisions"><div className="decisions-head"><div><span className="section-index">IMMUTABLE EVIDENCE</span><h2>Every decision leaves a receipt.</h2><p>Tokens are removed before persistence; source, freshness, hashes, policy, and reasons remain.</p></div><a className="button button-outline" href="/api/v1/decisions/export" download><Download/> Export CSV</a></div><div className="receipts-table prod-receipts"><div className="receipt-table-head"><span>STATE</span><span>ASSET / SESSION</span><span>MOVE</span><span>PRIMARY RULE</span><span>EXECUTION</span></div>{receipts.length ? receipts.map(({ decision: item, order }) => <article className="receipt-row" key={item.id}><span className={`receipt-verdict verdict-${item.permission === "ALERT_ONLY" ? "alert" : item.permission.toLowerCase()}`}>{item.permission}</span><span><strong>{item.snapshot.displaySymbol}</strong><small>{item.snapshot.session}</small></span><span>{item.snapshot.offHoursMoveBps === null ? "—" : `${item.snapshot.offHoursMoveBps.toFixed(1)} bps`}</span><span><strong>{item.reasonCodes[0]}</strong><small>{time(item.createdAt)}</small></span><span><strong>{executionLabel(order)}</strong><small>{order?.status ?? "Permission only"}</small></span></article>) : <div className="empty-receipts"><FileCheck2/><strong>{user ? "No receipts yet." : "Wallet receipts are private."}</strong><span>{user ? "Run the guard to create evidence." : "Sign in to inspect your audit trail."}</span></div>}</div>{nextReceiptOffset !== null && <button className="button button-outline prod-load-more" disabled={busy} onClick={() => void loadMoreReceipts()}>{busy ? <LoaderCircle className="spin"/> : <ChevronDown/>} Load older receipts</button>}</section>
+      <section className="decisions-section" id="decisions"><div className="decisions-head"><div><span className="section-index">IMMUTABLE EVIDENCE</span><h2>Every decision leaves a receipt.</h2><p>Tokens are removed before persistence; source, freshness, hashes, policy, and reasons remain.</p></div><a className="button button-outline" href="/api/v1/decisions/export" download><Download/> Export CSV</a></div><div className="receipts-table prod-receipts"><div className="receipt-table-head"><span>STATE</span><span>ASSET / SESSION</span><span>MOVE</span><span>PRIMARY RULE</span><span>EXECUTION</span></div>{receipts.length ? receipts.map(({ decision: item, order }) => <article className="receipt-row" key={item.id}><span className={`receipt-verdict verdict-${item.permission === "ALERT_ONLY" ? "alert" : item.permission.toLowerCase()}`}>{item.permission}</span><span><strong>{item.snapshot.displaySymbol}</strong><small>{item.snapshot.session}</small></span><span>{item.snapshot.offHoursMoveBps === null ? "—" : `${item.snapshot.offHoursMoveBps.toFixed(1)} bps`}</span><span><strong>{primaryRuleForDecision(item).code}</strong><small>{time(item.createdAt)}</small></span><span><strong>{executionLabel(order)}</strong><small>{order?.status ?? "Permission only"}</small></span></article>) : <div className="empty-receipts"><FileCheck2/><strong>{user ? "No receipts yet." : "Wallet receipts are private."}</strong><span>{user ? "Run the guard to create evidence." : "Sign in to inspect your audit trail."}</span></div>}</div>{nextReceiptOffset !== null && <button className="button button-outline prod-load-more" disabled={busy} onClick={() => void loadMoreReceipts()}>{busy ? <LoaderCircle className="spin"/> : <ChevronDown/>} Load older receipts</button>}</section>
 
       <section className="safety-strip"><ShieldCheck/><div><strong>Built to refuse.</strong><span>Wallet ownership · Bitget-only source · deterministic permission · single-use token</span></div><Pill tone="good"><span className="live-dot"/> NO LIVE MONEY PATH</Pill></section>
       <section className="prod-account"><div><strong>Account controls</strong><span>Export or delete tenant data. Sensitive actions require a wallet signature less than five minutes old.</span></div><div><a href="/api/v1/account/export" className="button button-outline"><Download/> Export data</a><button className="button button-outline danger" onClick={() => { if (user && window.confirm("Delete your SessionGuard account and encrypted credentials?")) void productionApi.deleteAccount().then(() => setUser(null)).catch((caught) => setError(caught.message)); }}><Trash2/> Delete account</button></div></section>

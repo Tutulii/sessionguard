@@ -76,6 +76,9 @@ export class BitgetDemoTradingAdapter implements DemoTradingAdapter {
       client.callOperation("getAccountAssets", {}) as Promise<OperationResult>,
       client.callOperation("getOpenOrders", { category: "SPOT", limit: "100" }) as Promise<OperationResult>,
     ]);
+    const account = assetResult.data && typeof assetResult.data === "object" && !Array.isArray(assetResult.data)
+      ? assetResult.data as Row
+      : {};
     const assets = rows(assetResult.data);
     const coinToSymbol: Record<string, ProductionSymbol> = {
       RNVDA: "RNVDAUSDT", RTSLA: "RTSLAUSDT", RORCL: "RORCLUSDT",
@@ -94,10 +97,18 @@ export class BitgetDemoTradingAdapter implements DemoTradingAdapter {
       }];
     });
     const usdt = assets.find((asset) => String(asset.coin ?? asset.asset ?? "").toUpperCase() === "USDT");
-    const availableBalanceCents = cents(usdt ? number(usdt, ["available", "availableBalance", "free"]) : 0);
-    const reportedEquity = assets.reduce((total, asset) => total + number(asset, ["usdValue", "usdtValue"], 0), 0);
-    const computedEquityCents = availableBalanceCents + positions.reduce((total, position) => total + position.marketValueCents, 0);
-    const accountEquityCents = Math.max(1, reportedEquity > 0 ? cents(reportedEquity) : computedEquityCents);
+    const directUsdtAvailable = usdt ? Math.max(0, number(usdt, ["available", "availableBalance", "free"])) : 0;
+    // Bitget defines effEquity as net value available for UTA margin. It is
+    // safe to use when positive, but a non-USDT asset balance alone is not
+    // assumed spendable for an rToken/USDT order.
+    const utaEffectiveEquity = Math.max(0, number(account, ["effEquity"]));
+    const reportedAccountEquity = number(account, ["accountEquity", "usdtEquity"]);
+    const reportedAssetEquity = assets.reduce((total, asset) => total + number(asset, ["usdValue", "usdtValue"], 0), 0);
+    const computedEquity = directUsdtAvailable + positions.reduce((total, position) => total + position.marketValueCents / 100, 0);
+    const accountEquityCents = Math.max(1, cents(reportedAccountEquity > 0
+      ? reportedAccountEquity
+      : reportedAssetEquity > 0 ? reportedAssetEquity : computedEquity));
+    const availableBalanceCents = Math.min(accountEquityCents, cents(Math.max(directUsdtAvailable, utaEffectiveEquity)));
     return {
       userId,
       accountEquityCents,

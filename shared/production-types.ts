@@ -140,6 +140,14 @@ export const GapScenarioV1Schema = z.object({
 });
 export type GapScenarioV1 = z.infer<typeof GapScenarioV1Schema>;
 
+export const GuardRuleResultSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+  effect: z.enum(["BLOCK", "ALERT", "CAP", "PASS"]),
+  scope: z.enum(["DATA", "MARKET", "PORTFOLIO", "ORDER", "OPERATIONS"]),
+});
+export type GuardRuleResult = z.infer<typeof GuardRuleResultSchema>;
+
 export const GuardDecisionSchema = z.object({
   id: z.string().uuid(),
   userId: z.string().uuid(),
@@ -152,7 +160,16 @@ export const GuardDecisionSchema = z.object({
   maxSlippageBps: z.number().int().nonnegative(),
   reasonCodes: z.array(z.string()).min(1),
   reasons: z.array(z.string()).min(1),
+  // Optional for backwards compatibility with persisted v1 receipts created
+  // before structured rule effects were introduced.
+  primaryReasonCode: z.string().optional(),
+  primaryReason: z.string().optional(),
+  ruleResults: z.array(GuardRuleResultSchema).min(1).optional(),
   gapScenarios: z.array(GapScenarioV1Schema),
+  stressExposureCents: z.number().int().nonnegative().optional(),
+  availableBalanceCents: z.number().int().optional(),
+  startingCollateralBufferPct: z.number().min(0).max(100).optional(),
+  requiredCollateralBufferPct: z.number().min(0).max(100).optional(),
   policyVersion: z.string(),
   inputHash: z.string(),
   marketHash: z.string(),

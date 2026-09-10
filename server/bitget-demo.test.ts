@@ -1,7 +1,7 @@
 import { MockServer, seedState } from "@bitget-ai/bitget-agent-sdk/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { placeDemoOrder, simulateWithOfficialSdk, validateDemoCredentials } from "./bitget-demo.js";
-import { isRealityInstrument } from "./production-bitget.js";
+import { BitgetDemoTradingAdapter, isRealityInstrument } from "./production-bitget.js";
 
 describe("official Bitget SDK paper boundary", () => {
   let mock: MockServer;
@@ -27,6 +27,32 @@ describe("official Bitget SDK paper boundary", () => {
     expect(isRealityInstrument({ symbol: "RNVDAUSDT", isReality: "no", status: "online" }, "RNVDAUSDT")).toBe(false);
     expect(isRealityInstrument({ symbol: "RNVDAUSDT", isReality: "yes", status: "offline" }, "RNVDAUSDT")).toBe(false);
     expect(isRealityInstrument({ symbol: "RTSLAUSDT", isReality: "yes", status: "online" }, "RNVDAUSDT")).toBe(false);
+  });
+
+  it("does not treat non-effective USDGO equity as spendable USDT", async () => {
+    mock.setResponseOverride("getAccountAssets", {
+      accountEquity: "8000", effEquity: "0",
+      assets: [{ coin: "USDGO", available: "8000", balance: "8000", equity: "8000", usdValue: "8000" }],
+    });
+    const portfolio = await new BitgetDemoTradingAdapter(mock.baseUrl).portfolio(
+      "11111111-1111-4111-8111-111111111111",
+      { apiKey: "test-key", secretKey: "test-secret", passphrase: "test-pass" },
+      { RNVDAUSDT: 200_000_000, RTSLAUSDT: 300_000_000, RORCLUSDT: 150_000_000 },
+    );
+    expect(portfolio).toMatchObject({ accountEquityCents: 800_000, availableBalanceCents: 0, collateralBufferPct: 0 });
+  });
+
+  it("uses positive Bitget UTA effective equity as spendable capacity", async () => {
+    mock.setResponseOverride("getAccountAssets", {
+      accountEquity: "8000", effEquity: "250",
+      assets: [{ coin: "USDGO", available: "8000", balance: "8000", equity: "8000", usdValue: "8000" }],
+    });
+    const portfolio = await new BitgetDemoTradingAdapter(mock.baseUrl).portfolio(
+      "11111111-1111-4111-8111-111111111111",
+      { apiKey: "test-key", secretKey: "test-secret", passphrase: "test-pass" },
+      { RNVDAUSDT: 200_000_000, RTSLAUSDT: 300_000_000, RORCLUSDT: 150_000_000 },
+    );
+    expect(portfolio).toMatchObject({ accountEquityCents: 800_000, availableBalanceCents: 25_000, collateralBufferPct: 3.1 });
   });
 
   it("places only a paper-configured market order through the intent tool", async () => {

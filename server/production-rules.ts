@@ -3,6 +3,7 @@ import type {
   GapScenarioV1,
   GuardDecision,
   GuardEvaluationInput,
+  GuardRuleResult,
   PortfolioSnapshot,
   ProductionMarketSnapshot,
   UserPolicy,
@@ -54,71 +55,89 @@ export function evaluateProductionGuard(args: {
     ? currentPositionCents + input.notionalCents
     : Math.max(0, currentPositionCents - input.notionalCents);
   const gaps = gapScenarios(projectedPositionCents, portfolio);
-  const reasonCodes: string[] = [];
-  const reasons: string[] = [];
+  const ruleResults: GuardRuleResult[] = [];
   let permission: GuardDecision["permission"] = "TRADE";
   let cap = policy.maxPaperOrderCents;
 
-  const block = (code: string, reason: string) => {
-    permission = "BLOCK";
-    reasonCodes.push(code);
-    reasons.push(reason);
+  const addRule = (code: string, message: string, effect: GuardRuleResult["effect"], scope: GuardRuleResult["scope"]) => {
+    ruleResults.push({ code, message, effect, scope });
   };
-  const alert = (code: string, reason: string) => {
+  const block = (code: string, reason: string, scope: GuardRuleResult["scope"]) => {
+    permission = "BLOCK";
+    addRule(code, reason, "BLOCK", scope);
+  };
+  const alert = (code: string, reason: string, scope: GuardRuleResult["scope"]) => {
     if (permission !== "BLOCK") permission = "ALERT_ONLY";
-    reasonCodes.push(code);
-    reasons.push(reason);
+    addRule(code, reason, "ALERT", scope);
+  };
+  const capped = (code: string, reason: string, scope: GuardRuleResult["scope"] = "ORDER") => {
+    addRule(code, reason, "CAP", scope);
   };
 
-  if (snapshot.dataMode !== input.dataMode) block("DATA_MODE_MISMATCH", "The requested and evaluated data modes do not match.");
-  if (snapshot.session === "MARKET_UNAVAILABLE") block("MARKET_UNAVAILABLE", "Bitget market data is unavailable or stale.");
-  if (snapshot.dataMode === "LIVE_BITGET" && snapshot.quoteAgeMs > platformPolicy.quoteMaxAgeMs) block("STALE_QUOTE", "The Bitget quote is older than ten seconds.");
-  if (snapshot.referenceQuality === "MISSING" || snapshot.anchorPriceMicros === null) block("ANCHOR_MISSING", "No Bitget cash-session anchor is available.");
-  if (now.getTime() - new Date(portfolio.capturedAt).getTime() > platformPolicy.portfolioMaxAgeMs) block("STALE_PORTFOLIO", "The Bitget Demo portfolio is older than fifteen seconds.");
+  if (snapshot.dataMode !== input.dataMode) block("DATA_MODE_MISMATCH", "The requested and evaluated data modes do not match.", "DATA");
+  if (snapshot.session === "MARKET_UNAVAILABLE") block("MARKET_UNAVAILABLE", "Bitget market data is unavailable or stale.", "MARKET");
+  if (snapshot.dataMode === "LIVE_BITGET" && snapshot.quoteAgeMs > platformPolicy.quoteMaxAgeMs) block("STALE_QUOTE", "The Bitget quote is older than ten seconds.", "DATA");
+  if (snapshot.referenceQuality === "MISSING" || snapshot.anchorPriceMicros === null) block("ANCHOR_MISSING", "No Bitget cash-session anchor is available.", "DATA");
+  if (now.getTime() - new Date(portfolio.capturedAt).getTime() > platformPolicy.portfolioMaxAgeMs) block("STALE_PORTFOLIO", "The Bitget Demo portfolio is older than fifteen seconds.", "PORTFOLIO");
 
   if ((snapshot.session === "WEEKEND" || snapshot.session === "HOLIDAY") && isIncrease) {
-    block("CASH_MARKET_DARK", "Exposure-increasing orders are disabled on weekends and US cash-market holidays.");
+    block("CASH_MARKET_DARK", "Exposure-increasing orders are disabled on weekends and US cash-market holidays.", "MARKET");
   }
   if (!isIncrease && input.notionalCents > currentPositionCents) {
-    block("NOT_REDUCE_ONLY", "The requested sell is larger than the current rToken position.");
+    block("NOT_REDUCE_ONLY", "The requested sell is larger than the current rToken position.", "ORDER");
   }
 
   if (snapshot.session === "EXTENDED") {
-    if (!policy.allowExtended) block("EXTENDED_DISABLED", "The user disabled extended-session paper orders.");
+    if (!policy.allowExtended) block("EXTENDED_DISABLED", "The user disabled extended-session paper orders.", "MARKET");
     cap = Math.min(cap, Math.floor(policy.maxPaperOrderCents * policy.extendedSizePct / 100));
-    reasonCodes.push("EXTENDED_SIZE_CAP");
-    reasons.push(`Extended-session notional is capped at $${(cap / 100).toFixed(2)}.`);
-    if (snapshot.spreadBps > policy.maxExtendedSpreadBps) alert("EXTENDED_SPREAD", "The Bitget spread exceeds the extended-session tolerance.");
+    capped("EXTENDED_SIZE_CAP", `Extended-session notional is capped at $${(cap / 100).toFixed(2)}.`);
+    if (snapshot.spreadBps > policy.maxExtendedSpreadBps) alert("EXTENDED_SPREAD", "The Bitget spread exceeds the extended-session tolerance.", "MARKET");
   } else if (snapshot.spreadBps > policy.maxCashSpreadBps) {
-    alert("SPREAD_LIMIT", "The Bitget spread exceeds the configured tolerance.");
+    alert("SPREAD_LIMIT", "The Bitget spread exceeds the configured tolerance.", "MARKET");
   }
 
   if (snapshot.offHoursMoveBps !== null && Math.abs(snapshot.offHoursMoveBps) > policy.maxOffHoursMoveBps) {
-    alert("OFF_HOURS_MOVE_LIMIT", "The rToken move from its Bitget cash-session anchor exceeds the configured tolerance.");
+    alert("OFF_HOURS_MOVE_LIMIT", "The rToken move from its Bitget cash-session anchor exceeds the configured tolerance.", "MARKET");
   }
   if (input.earningsWindow) {
     cap = Math.min(cap, Math.floor(policy.maxPaperOrderCents * policy.earningsSizePct / 100));
-    reasonCodes.push("EARNINGS_SIZE_CAP");
-    reasons.push(`Earnings-window notional is capped at $${(cap / 100).toFixed(2)}.`);
+    capped("EARNINGS_SIZE_CAP", `Earnings-window notional is capped at $${(cap / 100).toFixed(2)}.`);
   }
 
-  if (dailyUsage.count >= platformPolicy.dailyOrderCount) block("DAILY_ORDER_LIMIT", "The daily paper-order count limit has been reached.");
+  if (dailyUsage.count >= platformPolicy.dailyOrderCount) block("DAILY_ORDER_LIMIT", "The daily paper-order count limit has been reached.", "OPERATIONS");
   if (isIncrease) {
     const dailyRemaining = platformPolicy.dailyGrossNewNotionalCents - dailyUsage.grossNewNotionalCents;
     cap = Math.min(cap, Math.max(0, dailyRemaining));
-    if (dailyRemaining <= 0) block("DAILY_NOTIONAL_LIMIT", "The daily gross new-notional limit has been reached.");
+    if (dailyRemaining <= 0) block("DAILY_NOTIONAL_LIMIT", "The daily gross new-notional limit has been reached.", "OPERATIONS");
+
+    const spendableBalanceCents = Math.max(0, portfolio.availableBalanceCents);
+    const cappedRequestCents = Math.min(input.notionalCents, cap);
+    if (spendableBalanceCents <= 0) {
+      block("INSUFFICIENT_AVAILABLE_BALANCE", "Bitget Demo reports no spendable USDT or positive UTA effective equity for this order.", "PORTFOLIO");
+    } else if (spendableBalanceCents < cappedRequestCents) {
+      cap = spendableBalanceCents;
+      capped("AVAILABLE_BALANCE_CAP", `Spendable Bitget Demo balance caps this order at USD ${(cap / 100).toFixed(2)}.`, "PORTFOLIO");
+    }
   }
 
   const stressEight = gaps.find((item) => item.gapPct === -8);
   if (isIncrease && position?.usedAsCollateral !== false && stressEight && stressEight.projectedCollateralBufferPct < policy.minCollateralBufferPct) {
-    block("COLLATERAL_STRESS", "An 8% downside scenario breaches the required collateral buffer.");
+    block("COLLATERAL_STRESS", "An 8% downside scenario breaches the required collateral buffer.", "PORTFOLIO");
   }
-  if (cap <= 0) block("ZERO_SIZE_CAP", "The active policy permits no additional notional.");
+  if (cap <= 0) block("ZERO_SIZE_CAP", "The active policy permits no additional notional.", "ORDER");
 
-  if (!reasonCodes.length) {
-    reasonCodes.push("POLICY_PASS");
-    reasons.push("Session, Bitget anchor, spread, portfolio, stress, and operational checks passed.");
+  if (!ruleResults.length) {
+    addRule("POLICY_PASS", "Session, Bitget anchor, spread, portfolio, stress, and operational checks passed.", "PASS", "ORDER");
   }
+
+  const effectRank: Record<GuardRuleResult["effect"], number> = { BLOCK: 0, ALERT: 1, CAP: 2, PASS: 3 };
+  const orderedRules = [...ruleResults].sort((left, right) => effectRank[left.effect] - effectRank[right.effect]);
+  const primaryEffect: GuardRuleResult["effect"] = orderedRules.some((rule) => rule.effect === "BLOCK")
+    ? "BLOCK"
+    : orderedRules.some((rule) => rule.effect === "ALERT") ? "ALERT" : orderedRules[0].effect;
+  const primaryRule = orderedRules.find((rule) => rule.effect === primaryEffect) ?? orderedRules[0];
+  const reasonCodes = orderedRules.map((rule) => rule.code);
+  const reasons = orderedRules.map((rule) => rule.message);
 
   const marketHash = productionHash(snapshot);
   const portfolioHash = productionHash(portfolio);
@@ -136,7 +155,14 @@ export function evaluateProductionGuard(args: {
     maxSlippageBps: input.maxSlippageBps,
     reasonCodes,
     reasons,
+    primaryReasonCode: primaryRule.code,
+    primaryReason: primaryRule.message,
+    ruleResults: orderedRules,
     gapScenarios: gaps,
+    stressExposureCents: projectedPositionCents,
+    availableBalanceCents: portfolio.availableBalanceCents,
+    startingCollateralBufferPct: portfolio.collateralBufferPct,
+    requiredCollateralBufferPct: policy.minCollateralBufferPct,
     policyVersion: effectivePolicyVersion,
     inputHash,
     marketHash,

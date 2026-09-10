@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MotionConfig } from "framer-motion";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { defaultUserPolicy, symbolMetadata, type ProductionMarketSnapshot } from "../../shared/production-types";
+import { defaultUserPolicy, symbolMetadata, type GuardDecision, type ProductionMarketSnapshot } from "../../shared/production-types";
 import { replayScenarios } from "../../shared/replays";
 import { App } from "../App";
 
@@ -76,6 +76,36 @@ function mockProductionApi(authenticated = false) {
       positions: [{ symbol: "RORCLUSDT", quantityMicros: 2_000_000, marketValueCents: 60_000, usedAsCollateral: true }],
       openOrderCount: 0, source: "REPLAY", capturedAt: new Date().toISOString(),
     } });
+    if (url.pathname === "/api/v1/guard/evaluate") {
+      const snapshot = snapshotFor("RORCLUSDT", "sunday-oracle");
+      const decision: GuardDecision = {
+        id: "22222222-2222-4222-8222-222222222222", userId: user.id, createdAt: new Date().toISOString(),
+        permission: "BLOCK", symbol: "RORCLUSDT", side: "buy", requestedNotionalCents: 25_000,
+        allowedNotionalCents: 0, maxSlippageBps: 50,
+        reasonCodes: ["INSUFFICIENT_AVAILABLE_BALANCE", "COLLATERAL_STRESS", "EXTENDED_SIZE_CAP"],
+        reasons: [
+          "Bitget Demo reports no spendable USDT or positive UTA effective equity for this order.",
+          "An 8% downside scenario breaches the required collateral buffer.",
+          "Extended-session notional is capped at $14.14.",
+        ],
+        primaryReasonCode: "INSUFFICIENT_AVAILABLE_BALANCE",
+        primaryReason: "Bitget Demo reports no spendable USDT or positive UTA effective equity for this order.",
+        ruleResults: [
+          { code: "INSUFFICIENT_AVAILABLE_BALANCE", message: "Bitget Demo reports no spendable USDT or positive UTA effective equity for this order.", effect: "BLOCK", scope: "PORTFOLIO" },
+          { code: "COLLATERAL_STRESS", message: "An 8% downside scenario breaches the required collateral buffer.", effect: "BLOCK", scope: "PORTFOLIO" },
+          { code: "EXTENDED_SIZE_CAP", message: "Extended-session notional is capped at $14.14.", effect: "CAP", scope: "ORDER" },
+        ],
+        gapScenarios: [
+          { gapPct: -3, pnlCents: -750, projectedCollateralBufferPct: 0 },
+          { gapPct: -8, pnlCents: -2_000, projectedCollateralBufferPct: 0 },
+          { gapPct: -12, pnlCents: -3_000, projectedCollateralBufferPct: 0 },
+        ],
+        stressExposureCents: 25_000, availableBalanceCents: 0, startingCollateralBufferPct: 0,
+        requiredCollateralBufferPct: 15, policyVersion: "test", inputHash: "input", marketHash: "market",
+        portfolioHash: "portfolio", snapshot, portfolioCapturedAt: new Date().toISOString(), dataMode: "REPLAY",
+      };
+      return json({ decision });
+    }
     if (url.pathname === "/api/v1/decisions") return json({ receipts: [], page: { nextOffset: null } });
     if (url.pathname === "/api/v1/notifications/channels") return json({ channels: [], vapidPublicKey: null });
     if (url.pathname === "/api/v1/notifications/inbox") return json({ notifications: [] });
@@ -112,7 +142,9 @@ describe("SessionGuard React experience", () => {
     expect(timeline.value).toBe("0");
     expect(screen.getByRole("button", { name: "Reach decision point to run guard" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Jump to decision point" }));
-    await waitFor(() => expect(timeline.value).toBe(String(replayScenarios[0].snapshot.chart.length - 1)));
+    await waitFor(() => expect(
+      (screen.getByRole("slider", { name: "Replay timeline" }) as HTMLInputElement).value,
+    ).toBe(String(replayScenarios[0].snapshot.chart.length - 1)));
     expect(screen.getByText("DECISION POINT READY")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /sign wallet to run guard/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/rORCL Bitget rToken price chart/i)).toBeInTheDocument();
@@ -122,9 +154,13 @@ describe("SessionGuard React experience", () => {
     vi.stubGlobal("fetch", mockProductionApi());
     renderRoute("/app?replay=sunday-oracle");
     const select = await screen.findByRole("combobox", { name: "Replay scenario" });
+    const earnings = screen.getByRole("checkbox", { name: /Earnings risk window/i }) as HTMLInputElement;
+    fireEvent.click(earnings);
+    expect(earnings).toBeChecked();
     fireEvent.change(select, { target: { value: "cash-nvidia" } });
     await waitFor(() => expect(screen.getAllByText("CASH OPEN").length).toBeGreaterThan(0));
     expect(screen.getByRole("heading", { name: /rNVDA/i })).toBeInTheDocument();
+    expect(earnings).not.toBeChecked();
   });
 
   it("explains persistent envelope encryption in the authenticated Demo dialog", async () => {
@@ -143,4 +179,21 @@ describe("SessionGuard React experience", () => {
     }
     expect(screen.getAllByRole("link", { name: "Policy" }).some((link) => link.getAttribute("href") === "#policy")).toBe(true);
   });
+  it("shows the actual blocking rule and explains equal-notional stress math", async () => {
+    vi.stubGlobal("fetch", mockProductionApi(true));
+    vi.stubGlobal("EventSource", FakeEventSource);
+    renderRoute("/app?replay=sunday-oracle");
+    await screen.findByRole("button", { name: /0x1111…1111/i });
+    fireEvent.click(screen.getByRole("button", { name: "Jump to decision point" }));
+    await screen.findByText("DECISION POINT READY");
+    fireEvent.click(await screen.findByRole("button", { name: "Run deterministic guard" }));
+
+    expect(await screen.findByText("PRIMARY BLOCK RULE")).toBeInTheDocument();
+    expect(screen.getAllByText("INSUFFICIENT_AVAILABLE_BALANCE").length).toBeGreaterThan(0);
+    expect(screen.getByText(/no spendable USDT or positive UTA effective equity/i)).toBeInTheDocument();
+    expect(screen.getByText("Projected rORCL position stress")).toBeInTheDocument();
+    expect(screen.getByText(/Equal dollar exposure produces equal dollar gap P&L across symbols/i)).toBeInTheDocument();
+    expect(screen.getByText(/Spendable at decision: \$0\.00/)).toBeInTheDocument();
+  });
+
 });
