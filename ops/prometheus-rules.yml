@@ -1,0 +1,62 @@
+groups:
+  - name: sessionguard-production
+    rules:
+      - alert: SessionGuardAvailabilityBudgetBurn
+        expr: sum(rate(sessionguard_http_requests_total{status=~"5.."}[10m])) / clamp_min(sum(rate(sessionguard_http_requests_total[10m])), 0.001) > 0.001
+        for: 10m
+        labels: { severity: page }
+        annotations: { summary: "SessionGuard API is below its 99.9% availability objective" }
+      - alert: SessionGuardCachedApiP95High
+        expr: histogram_quantile(0.95, sum by (le) (rate(sessionguard_http_duration_seconds_bucket[10m]))) > 0.3
+        for: 10m
+        labels: { severity: ticket }
+        annotations: { summary: "SessionGuard cached API p95 exceeds 300 ms" }
+      - alert: SessionGuardNotificationP95High
+        expr: histogram_quantile(0.95, sum by (le) (rate(sessionguard_notification_delivery_seconds_bucket[10m]))) > 60
+        for: 10m
+        labels: { severity: page }
+        annotations: { summary: "Notification provider delivery p95 exceeds 60 seconds" }
+      - alert: SessionGuardBitgetStale
+        expr: min by (symbol) (sessionguard_provider_fresh{provider="bitget"}) == 0
+        for: 30s
+        labels: { severity: page }
+        annotations: { summary: "A supported Bitget rToken feed is unavailable or stale" }
+      - alert: SessionGuardDuplicateOrderAttempt
+        expr: increase(sessionguard_duplicate_order_reservations_total[5m]) > 0
+        labels: { severity: page }
+        annotations: { summary: "A duplicate paper-order request reached idempotency protection" }
+      - alert: SessionGuardWorkerStale
+        expr: time() - sessionguard_worker_last_success_unixtime > 30
+        for: 30s
+        labels: { severity: page }
+        annotations: { summary: "SessionGuard worker heartbeat is stale" }
+
+      - alert: SessionGuardAgentQueueOldest
+        expr: sessionguard_agent_oldest_runnable_job_age_seconds > 30
+        for: 30s
+        labels: { severity: page }
+        annotations: { summary: "Agent runnable queue is older than 30 seconds" }
+      - alert: SessionGuardAgentDecisionP95High
+        expr: histogram_quantile(0.95, sum by (le) (rate(sessionguard_agent_run_duration_seconds_bucket[10m]))) > 30
+        for: 10m
+        labels: { severity: ticket }
+        annotations: { summary: "Agent detected-event to terminal decision p95 exceeds 30 seconds" }
+      - alert: SessionGuardAgentQwenP95High
+        expr: histogram_quantile(0.95, sum by (le) (rate(sessionguard_agent_qwen_latency_seconds_bucket[10m]))) > 15
+        for: 10m
+        labels: { severity: ticket }
+        annotations: { summary: "Qwen assessment p95 exceeds 15 seconds" }
+      - alert: SessionGuardAgentKillSwitchActive
+        expr: max(sessionguard_agent_kill_switch) > 0
+        for: 1m
+        labels: { severity: ticket }
+        annotations: { summary: "An agent kill switch is active" }
+      - alert: SessionGuardAgentFailedClosed
+        expr: increase(sessionguard_agent_runs_total{state="FAILED_CLOSED"}[10m]) > 0
+        labels: { severity: ticket }
+        annotations: { summary: "An agent run failed closed" }
+      - alert: SessionGuardAgentOutcomeCoverageLow
+        expr: sum(increase(sessionguard_agent_outcomes_total[1h])) < 1 and sum(increase(sessionguard_agent_runs_total[1h])) > 0
+        for: 10m
+        labels: { severity: ticket }
+        annotations: { summary: "Agent outcome scoring is not keeping up with runs" }

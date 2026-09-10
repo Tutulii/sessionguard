@@ -1,0 +1,15 @@
+node_modules
+dist
+dist-server
+.data
+test-results
+playwright-report
+.env
+.env.*
+*.log
+*.orig
+*.rej
+.tmp-*
+.patch-test
+.git
+.gitignore

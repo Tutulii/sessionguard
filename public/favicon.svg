@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="SessionGuard shield">
+  <rect width="64" height="64" rx="18" fill="#15362f"/>
+  <path d="M32 10 51 17v14c0 12.7-7.6 20.6-19 24-11.4-3.4-19-11.3-19-24V17l19-7Z" fill="#f4eddf"/>
+  <path d="M32 17 44 21.4v9.2c0 7.9-4.3 13.2-12 16.2-7.7-3-12-8.3-12-16.2v-9.2L32 17Z" fill="#ef674e"/>
+  <path d="M24 31.5h16M32 23.5v16" stroke="#15362f" stroke-width="4" stroke-linecap="round"/>
+</svg>

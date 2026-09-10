@@ -1,0 +1,58 @@
+.production-dashboard .prod-positions {
+  border-top: 1px solid rgba(23, 59, 53, .12);
+  display: grid;
+  gap: .55rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.production-dashboard .prod-positions article {
+  align-items: center;
+  background: rgba(255, 255, 255, .48);
+  border: 1px solid rgba(23, 59, 53, .1);
+  border-radius: 14px;
+  display: grid;
+  gap: .7rem;
+  grid-template-columns: 38px 1fr auto;
+  padding: .7rem;
+}
+
+.production-dashboard .prod-positions article > div,
+.production-dashboard .prod-positions article > span:last-child {
+  display: grid;
+  gap: .15rem;
+}
+
+.production-dashboard .prod-positions article > span:last-child { text-align: right; }
+.production-dashboard .prod-positions small { color: #536860; font-size: .64rem; letter-spacing: .06em; }
+.production-dashboard .prod-load-more { margin: 1rem auto 0; }
+
+.fatal-error {
+  align-items: center;
+  background: #f4eddf;
+  color: #15362f;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 2rem;
+  text-align: center;
+}
+
+.fatal-error h1 { font-family: "Fraunces", Georgia, serif; margin: 0; }
+.fatal-error p { color: #536860; line-height: 1.6; max-width: 38rem; }
+.fatal-error button {
+  background: #15362f;
+  border: 0;
+  border-radius: 999px;
+  color: white;
+  cursor: pointer;
+  min-height: 44px;
+  padding: .75rem 1.1rem;
+}
+
+@media (max-width: 460px) {
+  .production-dashboard .prod-positions article { grid-template-columns: 34px 1fr; }
+  .production-dashboard .prod-positions article > span:last-child { grid-column: 1 / -1; text-align: left; }
+}

@@ -1,0 +1,56 @@
+app = "sessionguard-demo"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  release_command = "node dist-server/server/migrate.js"
+  strategy = "rolling"
+
+[processes]
+  web = "node --import ./dist-server/server/instrumentation.js dist-server/server/index.js"
+  worker = "node --import ./dist-server/server/instrumentation.js dist-server/server/worker-entry.js"
+
+[env]
+  HOST = "0.0.0.0"
+  PORT = "8080"
+  AWS_REGION = "ap-southeast-1"
+  PUBLIC_BETA_USER_CAP = "500"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 2
+  processes = ["web"]
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/api/v1/health/ready"
+
+[checks.worker_health]
+  processes = ["worker"]
+  type = "http"
+  port = 9091
+  method = "GET"
+  path = "/internal/health"
+  interval = "15s"
+  timeout = "3s"
+  grace_period = "30s"
+
+[[vm]]
+  processes = ["web"]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[[vm]]
+  processes = ["worker"]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

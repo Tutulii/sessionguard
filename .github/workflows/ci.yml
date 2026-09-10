@@ -1,0 +1,86 @@
+name: production-gates
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: sessionguard
+          POSTGRES_PASSWORD: sessionguard
+          POSTGRES_DB: sessionguard
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sessionguard"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://sessionguard:sessionguard@127.0.0.1:5432/sessionguard
+      TEST_REDIS_URL: redis://127.0.0.1:6379
+      CI: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install Chromium runtime
+        run: npx playwright install --with-deps chromium
+
+      - name: Type, unit, integration, security, dependency, and production build gates
+        run: npm run check
+
+      - name: Apply and verify the PostgreSQL migration
+        env:
+          DATABASE_URL: postgres://sessionguard:sessionguard@127.0.0.1:5432/sessionguard
+        run: |
+          npm run migrate
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0001_production_platform.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0002_agent_runtime.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT version FROM schema_migrations WHERE version='0001-production-platform'"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT version FROM schema_migrations WHERE version='0002-agent-runtime'"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT to_regclass('public.agent_runs'), to_regclass('public.agent_jobs'), to_regclass('public.agent_outcomes')"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT tgname FROM pg_trigger WHERE tgname='audit_events_immutable' AND NOT tgisinternal"
+
+      - name: Desktop and mobile Chromium journeys
+        run: npm run test:e2e
+
+      - name: Build production container
+        run: docker build --pull --tag sessionguard:${{ github.sha }} .
+
+      - name: Scan container for high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: sessionguard:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
