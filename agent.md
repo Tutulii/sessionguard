@@ -45,6 +45,13 @@ Implement every requirement in `PRODUCTION_PLAN.md` and `AI_AGENT_PRODUCTION_PLA
 
 The original hackathon prototype and its audit remain recorded in `IMPLEMENTATION_PLAN.md` and `IMPLEMENTATION_AUDIT.md`. That baseline was complete on 2026-09-09, but its single-user SQLite and ephemeral-vault assumptions are superseded by this production contract.
 
+## Final verification
+
+- Roadmap-to-code comparison: **11/11 AI-agent plan sections mapped; zero unresolved implementation gaps.**
+- Dedupe acceptance: one decision for unchanged official/replay content, amended content may create one new decision, and collateral alerts re-fire only on a worse band or a recovered-and-rearmed episode.
+- Release evidence: GitHub production-gates run `34550082271` passed 239 tests, 20 applicable desktop/mobile Chromium journeys, PostgreSQL migrations, the production container build, and a Trivy scan with zero high or critical findings.
+- Immutable legacy rows are retained in exports and grouped only in the visible agent tape.
+
 ## Status
 
 **COMPLETE — production and AI-agent plans, including the 2026-09-11 semantic-dedupe hardening amendment, passed final comparison and release verification. See `PRODUCTION_AUDIT.md` and `AI_AGENT_PRODUCTION_AUDIT.md`.**

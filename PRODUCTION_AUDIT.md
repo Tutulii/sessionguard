@@ -1,8 +1,8 @@
 # SessionGuard Production Plan Audit
 
-Audit date: 2026-09-09  
-Audited contract: `PRODUCTION_PLAN.md` and `agent.md`  
-Result: **100% of the planned production-beta implementation is present, tested, and documented. No implementation gaps remain.**
+Audit date: 2026-09-11
+Audited contract: `PRODUCTION_PLAN.md`, `AI_AGENT_PRODUCTION_PLAN.md`, and `agent.md`
+Result: **100% of the planned production-beta platform and its additive AI-agent extension are present, tested, and documented. No implementation gaps remain.**
 
 This verdict covers the deliberately narrow code and delivery scope: Bitget-only rToken data, deterministic permissions, local replay, and Bitget Demo/paper execution for rNVDA, rTSLA, and rORCL. It does not claim that a public Fly deployment, managed-cloud restore drill, or phased user rollout has occurred. Those are operator-controlled launch activities that require production accounts, secrets, and approval; the configuration, gates, dashboards, and runbooks for them are included.
 
@@ -11,20 +11,20 @@ This verdict covers the deliberately narrow code and delivery scope: Bitget-only
 | Gate | Result |
 |---|---|
 | TypeScript client and server type checking | Passed |
-| Unit, contract, failure, security, load, and PostgreSQL/Redis integration tests | **35 files, 112 tests passed** |
-| Desktop and 390 px mobile Chromium journeys | **18 passed, 4 intentionally skipped duplicate-project cases** |
-| Automated accessibility scan | No serious or critical Axe violations on landing or dashboard |
+| Unit, contract, failure, security, load, agent, and PostgreSQL/Redis integration tests | **47 files, 239 tests passed in CI** |
+| Desktop and 390 px mobile Chromium journeys | **20 passed, 4 intentionally skipped cross-project cases** |
+| Automated accessibility scan | No serious or critical Axe violations on landing, dashboard, or agent control room |
 | Reduced-motion and responsive checks | Passed; 390 px dashboard has no horizontal overflow and touch targets are at least 44 px |
 | Secret-pattern scan | Passed |
 | Dependency audit | `found 0 vulnerabilities` |
-| Production Vite/server build | Passed; main client entry 262.27 kB / 81.69 kB gzip |
-| PostgreSQL 18 migration | Runtime migration and `migrations/0001_production_platform.sql` both applied idempotently |
+| Production Vite/server build | Passed; main client entry 299.74 kB / 92.50 kB gzip |
+| PostgreSQL 18 migration | Runtime migrations `0001`, `0002`, and `0003` applied and were verified on PostgreSQL 18 |
 | PostgreSQL audit protection | `audit_events_immutable` trigger present and tested against update/delete |
 | Redis 8 production contracts | Sessions, atomic consume, locks, rate/cache, pub/sub, and leased jobs passed |
 | Live provider smoke | Real Bitget public endpoint returned rNVDA ticker, bid/ask, cash-session anchor, freshness, and chart through `ProductionMarketService` |
 | Synthetic API smoke | Health, replay snapshot, Sunday block, cash-open permission, and local simulation passed |
 | Fly configuration | `flyctl config validate --strict` passed |
-| Container build and high/critical scan | Enforced on every push/PR by `.github/workflows/ci.yml`; execution belongs to the CI runner because the local Termux host has no Docker daemon |
+| Container build and high/critical scan | Production image built and Trivy reported **0 high / 0 critical** in CI run `34550082271` |
 
 ## Requirement-to-implementation comparison
 
@@ -36,7 +36,7 @@ This verdict covers the deliberately narrow code and delivery scope: Bitget-only
 | Name the reference `BITGET_CASH_SESSION_ANCHOR` and never present it as an official equity close | Literal schema and snapshot contract live in `shared/production-types.ts`; the dashboard and README explicitly describe it as a Bitget risk reference, not an underlying quote. A repository-wide wording audit found no contradictory production copy. | Complete |
 | Visible replay fallback; replay never submits a Demo order | Live failures remain HTTP 503 with an explicit replay offer in `server/production-app.ts`; `server/production-trading.ts` routes replay only to `LOCAL_REPLAY`; API and browser tests prove the adapter is never called. | Complete |
 | Paper-only beta, maximum 500 users, exactly three rTokens | `PUBLIC_BETA_USER_CAP` is validated at 1–500; `supportedSymbols`/`symbolMetadata` allow only RNVDAUSDT, RTSLAUSDT, and RORCLUSDT; invalid-symbol and cap tests pass. | Complete |
-| Exclude agent/chatbot, licensed equity feed, live money, other assets, and native apps | Production entry points import no Qwen/agent loop, expose no chatbot, use no equity provider, and contain no live execution adapter. `ADVANCED_AGENT_ARCHITECTURE.md` remains a future design only. | Complete |
+| Original baseline excluded an agent/chatbot, licensed equity feed, live money, other assets, and native apps | `AI_AGENT_PRODUCTION_PLAN.md` explicitly supersedes only the original no-agent assumption with a durable event loop. Qwen is proposal-only, no chat composer exists, prices remain Bitget-only, and execution remains Demo-only for the same three assets. | Superseded safely; complete |
 
 ### Platform and identity
 
@@ -98,7 +98,7 @@ This verdict covers the deliberately narrow code and delivery scope: Bitget-only
 
 | Plan requirement | Implementation and evidence | Status |
 |---|---|---|
-| Full security, math, failure, concurrency, browser, accessibility, responsive, and motion coverage | The 35-file/112-test suite covers the specified boundary and attack cases; Playwright covers complete desktop/mobile journeys and accessibility. A 100-concurrent-request load smoke enforces cached p95 <300 ms. | Complete |
+| Full security, math, failure, concurrency, browser, accessibility, responsive, and motion coverage | The 47-file/239-test CI suite covers the specified platform and agent boundary/attack cases; 20 applicable Playwright journeys cover desktop/mobile behavior and accessibility. A 100-concurrent-request load smoke enforces cached p95 <300 ms. | Complete |
 | CI gates including migrations, E2E, scans, container, build | `.github/workflows/ci.yml` provisions PostgreSQL 18 and Redis 8, runs the complete check, both migration forms, Chromium journeys, Docker build, and Trivy high/critical scan. | Complete |
 | Availability/latency/delivery/duplicate/RPO/RTO objectives | `server/telemetry.ts`, `ops/prometheus-rules.yml`, `ops/grafana-dashboard.json`, synthetic smoke, and `OPERATIONS.md` encode all objectives, alerts, and restore measurements. | Complete |
 | Logs, OTel, Sentry, dashboards, synthetic, incident/kill/restore runbooks | Redacted structured Fastify logs, preloaded OTel SDK, backend/frontend Sentry, authenticated web/worker metrics, nine-panel Grafana dashboard, Prometheus rules, smoke script, and detailed operations runbooks are present. Production config requires TLS OTLP and Sentry. | Complete |
@@ -112,10 +112,10 @@ This verdict covers the deliberately narrow code and delivery scope: Bitget-only
 | Anchor is only a Bitget risk reference | Literal types and persistent UI disclosure enforce it. | Preserved |
 | Replay is disclosed and cannot submit Demo orders | Separate modes, labels, execution branch, and adapter-spy tests enforce it. | Preserved |
 | All execution is paper/Demo only | There is no live adapter, live execution enum, credential mode, or UI action. | Preserved |
-| Advanced agent is future-only | Architecture document exists; production runtime remains deterministic and contains no agent/chatbot loop. | Preserved |
+| Agent autonomy cannot replace deterministic permission | The additive AI-agent plan is implemented as an event-driven proposal loop without chat UI or order tools; every proposal still passes the deterministic guard and a scoped Demo-only capability. | Preserved through superseding plan |
 
 ## Completion verdict
 
-Every `PRODUCTION_PLAN.md` requirement has a concrete implementation location and test or operational evidence. The final source audit found and removed one duplicate SIWE nonce rate-limit call; its API/security tests passed afterward. The replay UX follow-up added a moving tick timeline, synchronized price/time/chart state, explicit playback controls, a locked decision point, and read-only source language; its desktop/mobile journeys and contrast audit pass. No TODO, FIXME, placeholder, contradictory price-source wording, unversioned private route, live-money path, or unresolved implementation item remains.
+Every `PRODUCTION_PLAN.md` requirement and every additive `AI_AGENT_PRODUCTION_PLAN.md` requirement has a concrete implementation location and test or operational evidence. The semantic-dedupe follow-up guarantees one decision per unchanged event, durable collateral-risk episodes, and console-only grouping of immutable legacy rows. GitHub production-gates run `34550082271` passed all 239 tests, 20 applicable browser journeys, PostgreSQL migrations, the production image build, and a zero-high/zero-critical Trivy scan. No TODO, FIXME, placeholder, contradictory price-source wording, unversioned private route, live-money path, or unresolved implementation item remains.
 
 **Implementation status: COMPLETE.** Public rollout remains intentionally gated by production secrets, managed services, external CI/container execution, restore/security exercises, and operator approval described in `OPERATIONS.md`.

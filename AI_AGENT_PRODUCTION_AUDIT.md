@@ -21,6 +21,23 @@ This is the implementation-to-roadmap acceptance record for `AI_AGENT_PRODUCTION
 | Metrics, alerts, health and operational runbook | `server/telemetry.ts`, `ops/prometheus-rules.yml`, `OPERATIONS.md` | operations contract, typecheck |
 | Security, dependency and execution-boundary gates | `scripts/secret-scan.mjs`, `scripts/agent-execution-scan.mjs`, CI workflow | `npm run security:secrets`, `npm run security:agent-execution`, `npm audit` |
 
+## Final roadmap-to-code comparison
+
+| Plan section | Result | Concrete evidence |
+|---|---|---|
+| 1–2. Objective and fixed boundaries | PASS | `agent.md`, versioned contracts, Demo-only adapter, and execution-path scan preserve Bitget-only, no-chatbot, no-live-money scope. |
+| 3. Runtime architecture | PASS | Durable repository, orchestrator, worker schedules, leases, recovery, semantic event dedupe, threshold hysteresis, and collateral episodes are implemented and tested. |
+| 4. Trusted ingestion and Qwen | PASS | SEC/IR watcher, SSRF/redirect/content controls, sanitized hashed context, tool-free structured Qwen validation, retry, grounding, and fail-closed tests are present. |
+| 5. Authorization, grants, execution | PASS | Deterministic agent guard, 24h/10-run eligibility, purpose-bound seven-day SIWE grant, single-use capability, fresh recheck, reservation, Demo submission, and reconciliation tests pass. |
+| 6. State, APIs, storage, and `/agent` UI | PASS | Versioned schemas, explicit transition table, tenant routes/SSE, PostgreSQL + SQLite parity, migrations `0002`/`0003`, export/delete, responsive UI, and accessible control plane are implemented. |
+| 7. Outcome scoring | PASS | Bitget-only observation windows, submitted/counterfactual scoring, MFE/MAE, avoided-loss/missed-upside wording, and insufficient-data behavior are tested. |
+| 8. Security, reliability, observability | PASS | Independent fail-closed paths, kill switches, redaction, tenant isolation, audit events, metrics, alerts, runbooks, scans, and runtime-container hardening pass release gates. |
+| 9. Verification | PASS | CI runs all 239 unit/contract/integration tests, real PostgreSQL/Redis checks, 20 applicable desktop/mobile journeys, migrations, builds, and security scans. |
+| 10. Delivery and rollout controls | PASS (implementation) | Feature flags, staged caps, readiness/kill-switch procedures, rollback, restore, and operator gates are documented and wired. No external public rollout is falsely claimed. |
+| 11. Final acceptance | PASS | Trusted triggers run without a click; Qwen remains proposal-only; non-trade paths cannot call the adapter; PAPER_AUTO is scoped and gated; replays remain local; all code release gates are green. |
+
+**Implementation comparison result: 11/11 roadmap sections mapped, zero unresolved code gaps, zero TODO/FIXME placeholders, and zero live-money paths. External staged rollout remains an operator-controlled activity, not an unimplemented code feature.**
+
 ## Required verification commands
 
 ```text
@@ -32,9 +49,9 @@ npm run build
 npm run test:e2e
 ```
 
-On this Android/Termux host Playwright reports `Unsupported platform: android`; the browser suite is CI-only. The local synthetic smoke probe passed against a started server.
+On this Android/Termux host Playwright reports `Unsupported platform: android`; the browser suite is therefore executed on the Linux CI runner. The local synthetic smoke probe passed against a started server.
 
-The CI workflow additionally applies and verifies migrations `0001`, `0002`, and `0003`, checks agent tables including durable collateral episode state, builds the production image, and runs Trivy.
+GitHub `production-gates` run [34550082271](https://github.com/Tutulii/sessionguard/actions/runs/34550082271) verified implementation commit `759fcce`: all 47 test files and 239 tests passed with PostgreSQL 18 and Redis 8 enabled; 20 applicable desktop/mobile Chromium journeys passed with four intentional cross-project skips; migrations `0001`, `0002`, and `0003` applied; the production image built; and Trivy reported zero high or critical findings.
 
 ## Dedupe hardening acceptance — 2026-09-11
 
@@ -48,6 +65,6 @@ The CI workflow additionally applies and verifies migrations `0001`, `0002`, and
 
 Local runtime observation after migration: worker health remained current and the existing collateral-trigger count did not increase across repeated worker ticks while the risk state stayed unchanged.
 
-Final local release gate: `npm run check` passed with 236 tests passing and 2 explicitly skipped, zero high dependency vulnerabilities, a clean secret scan, a clean Demo-only execution-boundary scan, and a successful client/server production build. `npm run synthetic:smoke` passed against the running local stack. Playwright remains CI-only because its runtime rejects Android before test discovery.
+Final local release gate: `npm run check` passed with 237 tests passing and 2 integration tests explicitly skipped without local PostgreSQL/Redis URLs, zero dependency vulnerabilities, a clean secret scan, a clean Demo-only execution-boundary scan, and a successful client/server production build. `npm run synthetic:smoke` passed against the running local stack. Linux CI enabled the external-service tests and passed all 239 tests plus the complete applicable browser, migration, container-build, and container-scan gates.
 
 No live-money execution path, live-equity redistribution feed, or chat-only trading surface is part of this implementation.
