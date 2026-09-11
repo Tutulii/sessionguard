@@ -311,8 +311,10 @@ export async function createProductionApp(options: ProductionAppOptions = {}) {
     if (!await rate(request, reply, "agent-replay", 10)) return;
     const parsed = ReplayAgentRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_AGENT_REPLAY_REQUEST" });
-    try { return reply.code(202).send({ run: await agent.replay(context.user.id, (request.params as { replayId: string }).replayId, parsed.data.analyst) }); }
-    catch (error) { return reply.code(404).send({ error: error instanceof Error ? error.message : "REPLAY_NOT_FOUND" }); }
+    try {
+      const run = await agent.replay(context.user.id, (request.params as { replayId: string }).replayId, parsed.data.analyst);
+      return reply.code(run.dedupeStatus === "SKIPPED_DUPLICATE" ? 200 : 202).send({ run, status: run.dedupeStatus });
+    } catch (error) { return reply.code(404).send({ error: error instanceof Error ? error.message : "REPLAY_NOT_FOUND" }); }
   });
   app.get("/api/v1/agent/outcomes", async (request, reply) => {
     const context = await requireAuth(request, reply); if (!context) return;

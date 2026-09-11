@@ -15,6 +15,7 @@ import { Brand } from "../components/Brand";
 import {
   productionApi, signAgentGrant, signInWithWallet, type AgentConsoleStatus, type AgentSettingsUpdate,
 } from "../lib/production-api";
+import { buildAgentRunTape } from "../lib/agent-run-tape";
 import "../agent.css";
 
 type ReplayOption = { id: string; name: string; kicker: string; description: string; symbol: string };
@@ -161,7 +162,8 @@ export function AgentPage() {
     return () => { stream.close(); window.clearInterval(interval); setStreamState("OFF"); };
   }, [load, user]);
 
-  const latest = runs[0];
+  const runTape = useMemo(() => buildAgentRunTape(runs), [runs]);
+  const latest = runTape.items[0];
   const setup = useMemo(() => [
     { title: "Wallet identity", done: Boolean(user), detail: user ? compactAddress(user.address) : "Sign on Arbitrum One" },
     { title: "Bitget Demo", done: Boolean(status?.demo.connected && status.demo.executionEnabled), detail: status?.demo.connected ? "Connection verified" : "Connect on permission desk" },
@@ -178,24 +180,29 @@ export function AgentPage() {
       - new Date(left.scoredAt ?? left.observationDueAt).getTime();
   }), [outcomes]);
 
-  const act = async (work: () => Promise<unknown>, success: string) => {
+  const act = async <T,>(work: () => Promise<T>, success: string | ((result: T) => string)) => {
     setBusy(true); setError(""); setNotice("");
-    try { await work(); await load(); setNotice(success); }
+    try { const result = await work(); await load(); setNotice(typeof success === "function" ? success(result) : success); }
     catch (caught) { setError(caught instanceof Error ? caught.message : "Agent request failed"); }
     finally { setBusy(false); }
   };
 
   const authenticate = () => act(async () => { const result = await signInWithWallet(); setUser(result.user); }, "Wallet session verified.");
-  const save = (mode: "DISABLED" | "SHADOW" | "ALERT_ONLY" = settings?.mode === "PAPER_AUTO" ? "ALERT_ONLY" : settings?.mode ?? "SHADOW") => {
-    if (!settings) return Promise.resolve();
+  const save = async (mode: "DISABLED" | "SHADOW" | "ALERT_ONLY" = settings?.mode === "PAPER_AUTO" ? "ALERT_ONLY" : settings?.mode ?? "SHADOW") => {
+    if (!settings) return;
     const update: AgentSettingsUpdate = { mode, symbols: settings.symbols, offHoursMoveThresholdBps: settings.offHoursMoveThresholdBps,
       minCollateralBufferPct: settings.minCollateralBufferPct, automaticOrderLimitCents: settings.automaticOrderLimitCents,
       automaticOrdersPerDay: settings.automaticOrdersPerDay, automaticGrossNewNotionalCents: settings.automaticGrossNewNotionalCents,
       notificationsEnabled: settings.notificationsEnabled };
-    return productionApi.updateAgentSettings(update);
+    await productionApi.updateAgentSettings(update);
   };
   const chooseMode = (mode: "DISABLED" | "SHADOW" | "ALERT_ONLY") => void act(() => save(mode), `${stateLabel(mode)} mode saved.`);
-  const runReplay = (id: string, analyst: "RECORDED" | "QWEN") => void act(() => productionApi.agentReplay(id, analyst), `${analyst === "RECORDED" ? "Recorded" : "Live-Qwen"} replay queued.`);
+  const runReplay = (id: string, analyst: "RECORDED" | "QWEN") => void act(
+    () => productionApi.agentReplay(id, analyst),
+    (result) => result.status === "SKIPPED_DUPLICATE"
+      ? "SKIPPED DUPLICATE · This exact replay event already has one decision."
+      : `${analyst === "RECORDED" ? "Recorded" : "Live-Qwen"} replay queued.`,
+  );
   const openRun = async (run: AgentRunV1) => { setBusy(true); try { setSelectedRun((await productionApi.agentRun(run.id)).run); } catch (caught) { setError(caught instanceof Error ? caught.message : "Run unavailable"); } finally { setBusy(false); } };
   const toggleSymbol = (symbol: ProductionSymbol) => {
     if (!settings) return; const selected = settings.symbols.includes(symbol);
@@ -242,7 +249,7 @@ export function AgentPage() {
 
       <section className="agent-replays"><div className="agent-section-title"><span className="agent-kicker">DISCLOSED ORCHESTRATOR REPLAYS</span><h2>Watch the refusal, not a frozen chart.</h2><p>These run through the same durable loop. They are always labelled local simulation and never enter the Bitget adapter.</p></div><div className="agent-replay-grid">{replays.filter((item) => ["sunday-oracle", "cash-nvidia"].includes(item.id)).map((item) => <article key={item.id}><span className="agent-replay-source">LOCAL REPLAY · BITGET-ALIGNED FIXTURE</span><h3>{item.name}</h3><p>{item.description}</p><div><button className="button button-coral" disabled={!user || busy || !status?.runtimeEnabled} onClick={() => runReplay(item.id, "RECORDED")}><Play/> Run recorded analyst</button><button className="button button-outline" disabled={!user || busy || status?.qwenHealth === "DISABLED"} onClick={() => runReplay(item.id, "QWEN")}><Bot/> Run live Qwen</button></div></article>)}</div></section>
 
-      <section className="agent-runs" id="runs"><div className="agent-section-title row"><div><span className="agent-kicker">IMMUTABLE RUN EVIDENCE</span><h2>Latest decisions</h2></div>{user && <button className="button button-outline" disabled={busy} onClick={() => void load()}><RefreshCw/> Refresh</button>}</div><div className="agent-run-table"><div className="agent-run-head"><span>STATE</span><span>ASSET / TRIGGER</span><span>ANALYST</span><span>PROPOSAL → ALLOWED</span><span>TIME</span><span/></div>{runs.length ? runs.map((run) => <button className="agent-run-row" onClick={() => void openRun(run)} key={run.id}><span><i className={`tone-${stateTone(run.state)}`}/>{stateLabel(run.state)}</span><span><strong>{symbolMetadata[run.symbol].displaySymbol}</strong><small>{run.context?.trigger.type ?? "QUEUED"}</small></span><span><strong>{run.analystOrigin === "RECORDED" ? "RECORDED FIXTURE" : "QWEN"}</strong><small>{run.sourceMode === "LOCAL_REPLAY" ? "LOCAL REPLAY" : "LIVE BITGET"}</small></span><span><strong>{run.assessment ? `${run.assessment.action} ${money(run.assessment.proposedNotionalCents)}` : run.state === "FAILED_CLOSED" ? "NO VALID PROPOSAL" : "ASSESSING"}</strong><small>{run.authorization ? `${run.authorization.permission} ${money(run.authorization.allowedNotionalCents)}` : run.state === "FAILED_CLOSED" ? `FAIL CLOSED · ${money(0)}` : "Permission pending"}</small></span><span>{shortTime(run.createdAt)}</span><ChevronRight/></button>) : <div className="agent-empty"><FileCheck2/><strong>{user ? "No agent runs yet." : "Run history is wallet-private."}</strong><span>{user ? "Enable shadow or launch a disclosed replay." : "Sign in to inspect persisted evidence."}</span></div>}</div></section>
+      <section className="agent-runs" id="runs"><div className="agent-section-title row"><div><span className="agent-kicker">IMMUTABLE RUN EVIDENCE</span><h2>Latest decisions</h2></div>{user && <button className="button button-outline" disabled={busy} onClick={() => void load()}><RefreshCw/> Refresh</button>}</div>{runTape.collapsedCount > 0 && <div className="agent-dedupe-note" role="status"><ShieldCheck/><span><strong>{runTape.collapsedCount} repeated legacy {runTape.collapsedCount === 1 ? "record" : "records"} grouped</strong><small>One unchanged source event or risk state now produces one visible decision. Every original row remains available in the immutable audit export.</small></span></div>}<div className="agent-run-table"><div className="agent-run-head"><span>STATE</span><span>ASSET / TRIGGER</span><span>ANALYST</span><span>PROPOSAL → ALLOWED</span><span>TIME</span><span/></div>{runTape.items.length ? runTape.items.map((run) => <button className="agent-run-row" onClick={() => void openRun(run)} key={run.id}><span><i className={`tone-${stateTone(run.state)}`}/>{stateLabel(run.state)}</span><span><strong>{symbolMetadata[run.symbol].displaySymbol}</strong><small>{run.context?.trigger.type ?? "QUEUED"}</small></span><span><strong>{run.analystOrigin === "RECORDED" ? "RECORDED FIXTURE" : "QWEN"}</strong><small>{run.sourceMode === "LOCAL_REPLAY" ? "LOCAL REPLAY" : "LIVE BITGET"}</small></span><span><strong>{run.assessment ? `${run.assessment.action} ${money(run.assessment.proposedNotionalCents)}` : run.state === "FAILED_CLOSED" ? "NO VALID PROPOSAL" : "ASSESSING"}</strong><small>{run.authorization ? `${run.authorization.permission} ${money(run.authorization.allowedNotionalCents)}` : run.state === "FAILED_CLOSED" ? `FAIL CLOSED · ${money(0)}` : "Permission pending"}</small></span><span>{shortTime(run.createdAt)}</span><ChevronRight/></button>) : <div className="agent-empty"><FileCheck2/><strong>{user ? "No agent runs yet." : "Run history is wallet-private."}</strong><span>{user ? "Enable shadow or launch a disclosed replay." : "Sign in to inspect persisted evidence."}</span></div>}</div></section>
 
       <section className="agent-outcomes" id="outcomes"><div className="agent-section-title"><span className="agent-kicker">BITGET-ONLY OUTCOMES</span><h2>Honest result labels.</h2><p>No fake Sharpe, no underlying-stock feed, and no “saved” claim when data is missing.</p></div><div className="agent-outcome-grid">{visibleOutcomes.slice(0, 6).map((outcome) => <article key={outcome.id}><div><span className={`tone-${outcome.status === "AVOIDED_LOSS" ? "good" : outcome.status === "MISSED_UPSIDE" ? "warn" : "neutral"}`}>{stateLabel(outcome.status)}</span><small>{symbolMetadata[outcome.symbol].displaySymbol}</small></div><strong>{outcome.pnlCents === null ? "—" : money(outcome.pnlCents)}</strong><p>{outcome.label}</p><small>Decision {money(outcome.proposedNotionalCents)} · {outcome.status === "PENDING" ? `next check ${shortTime(outcome.observationDueAt)}` : `scored ${shortTime(outcome.scoredAt)}`}</small></article>)}{!outcomes.length && <div className="agent-empty outcome"><Gauge/><strong>Outcomes appear after observation windows.</strong><span>Missing fresh Bitget data remains insufficient—not interpolated.</span></div>}</div></section>
 

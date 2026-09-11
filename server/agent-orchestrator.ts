@@ -23,7 +23,7 @@ import type { ProductionSymbol } from "../shared/production-types.js";
 import { replayScenarios } from "../shared/replays.js";
 import { assembleAgentContext } from "./agent-context.js";
 import { agentEligibility, type AgentGrantService } from "./agent-grant.js";
-import type { AgentRepository } from "./agent-repository.js";
+import type { AgentRepository, CollateralRiskState } from "./agent-repository.js";
 import type { Coordinator } from "./coordinator.js";
 import type { NotificationService } from "./notifications.js";
 import type { PlatformRepository } from "./platform-repository.js";
@@ -129,7 +129,7 @@ export class AgentOrchestrator {
       if (!settings.symbols.includes(event.symbol)) continue;
       results.push((await this.createRun({ settings, type: "OFFICIAL_EVENT", symbol: event.symbol, event,
         sourceMode: "LIVE_BITGET", analystOrigin: "QWEN", facts: { source: event.sourceType, contentHash: event.contentHash },
-        dedupeSeed: `${event.contentHash}:${settings.policyVersion}` })).run);
+        dedupeSeed: event.contentHash, dedupeScope: "EVENT" })).run);
     }
     return results;
   }
@@ -156,16 +156,7 @@ export class AgentOrchestrator {
     let created = 0;
     for (const settings of await this.options.repository.listEnabledSettings()) {
       const portfolio = await this.options.platformRepository.getPortfolio(settings.userId).catch(() => null);
-      if (portfolio) {
-        const threshold = Math.max(settings.minCollateralBufferPct, 15);
-        if (portfolio.collateralBufferPct <= threshold + 5) {
-          const band = Math.floor(portfolio.collateralBufferPct / 2) * 2;
-          const result = await this.createRun({ settings, type: "COLLATERAL_RISK", symbol: settings.symbols[0], event: null,
-            sourceMode: "LIVE_BITGET", analystOrigin: "QWEN", facts: { collateralBandPct: band },
-            dedupeSeed: `${band}:${Math.floor(now.getTime() / 3_600_000)}`, now });
-          if (result.created) created += 1;
-        }
-      }
+      if (portfolio && await this.scanCollateralRisk(settings, portfolio.collateralBufferPct, now)) created += 1;
       for (const symbol of settings.symbols) {
         try {
           const snapshot = await this.options.market.snapshot(symbol, { mode: "LIVE_BITGET", now });
@@ -203,6 +194,73 @@ export class AgentOrchestrator {
     return created;
   }
 
+  private async collateralState(settings: AgentSettingsV1, now: Date): Promise<CollateralRiskState> {
+    const stored = await this.options.repository.getCollateralRiskState(settings.userId);
+    if (stored) {
+      if (stored.settingsVersion === settings.settingsVersion) return stored;
+      const carried = { ...stored, settingsVersion: settings.settingsVersion, updatedAt: now.toISOString() };
+      await this.options.repository.saveCollateralRiskState(carried);
+      return carried;
+    }
+    {
+      const since = new Date(now.getTime() - 365 * 86_400_000).toISOString();
+      const recent = (await this.options.repository.listRuns(settings.userId, 10_000)).items
+        .filter((run) => run.createdAt >= since);
+      let legacy: { band: number; dedupeKey: string } | null = null;
+      for (const run of recent) {
+        const trigger = await this.options.repository.getTrigger(settings.userId, run.triggerId);
+        const value = trigger?.facts.collateralBandPct;
+        if (trigger?.type === "COLLATERAL_RISK" && typeof value === "number" && Number.isFinite(value) &&
+          value >= 0 && value <= 100 && (!legacy || value < legacy.band)) {
+          legacy = { band: value, dedupeKey: trigger.dedupeKey };
+        }
+      }
+      if (legacy) {
+        const migrated: CollateralRiskState = { userId: settings.userId, settingsVersion: settings.settingsVersion,
+          phase: "ACTIVE", episodeKey: sha(`legacy:${legacy.dedupeKey}`), lastBandPct: legacy.band, updatedAt: now.toISOString() };
+        await this.options.repository.saveCollateralRiskState(migrated);
+        return migrated;
+      }
+    }
+    const armed: CollateralRiskState = { userId: settings.userId, settingsVersion: settings.settingsVersion,
+      phase: "ARMED", episodeKey: sha(`initial:${settings.userId}:${settings.settingsVersion}`),
+      lastBandPct: null, updatedAt: now.toISOString() };
+    await this.options.repository.saveCollateralRiskState(armed);
+    return armed;
+  }
+
+  private async scanCollateralRisk(settings: AgentSettingsV1, bufferPct: number, now: Date) {
+    const release = await this.options.coordinator.acquireLock(`agent:collateral-risk:${settings.userId}`, 10_000);
+    if (!release) return false;
+    try {
+      const triggerAtPct = Math.min(100, Math.max(settings.minCollateralBufferPct, 15) + 5);
+      const rearmAbovePct = Math.min(100, triggerAtPct + 5);
+      let state = await this.collateralState(settings, now);
+      if (bufferPct > rearmAbovePct) {
+        if (state.phase === "ACTIVE") {
+          state = { ...state, phase: "ARMED", episodeKey: randomUUID(), lastBandPct: null, updatedAt: now.toISOString() };
+          await this.options.repository.saveCollateralRiskState(state);
+        }
+        return false;
+      }
+      if (bufferPct > triggerAtPct) return false;
+
+      const band = Math.floor(Math.max(0, bufferPct) / 2) * 2;
+      const worsened = state.phase === "ACTIVE" && state.lastBandPct !== null && band < state.lastBandPct;
+      if (state.phase === "ACTIVE" && !worsened) {
+        this.options.telemetry?.agentDedupe.inc();
+        return false;
+      }
+      const result = await this.createRun({ settings, type: "COLLATERAL_RISK", symbol: settings.symbols[0], event: null,
+        sourceMode: "LIVE_BITGET", analystOrigin: "QWEN",
+        facts: { collateralBandPct: band, triggerAtPct, rearmAbovePct, riskEpisode: state.episodeKey },
+        dedupeSeed: `episode:${state.episodeKey}:band:${band}`, now });
+      await this.options.repository.saveCollateralRiskState({ ...state, phase: "ACTIVE",
+        lastBandPct: state.lastBandPct === null ? band : Math.min(state.lastBandPct, band), updatedAt: now.toISOString() });
+      return result.created;
+    } finally { await release(); }
+  }
+
   async manualShadow(userId: string, symbol: ProductionSymbol, type: Exclude<AgentTriggerType, "OFFICIAL_EVENT" | "MANUAL_SHADOW" | "OUTCOME_DUE">) {
     const stored = await this.settings(userId); const settings = AgentSettingsV1Schema.parse({ ...stored, mode: "SHADOW" });
     return (await this.createRun({ settings, type: "MANUAL_SHADOW", symbol, event: null, sourceMode: "LIVE_BITGET",
@@ -213,9 +271,23 @@ export class AgentOrchestrator {
     const scenario = replayScenarios.find((item) => item.id === replayId); if (!scenario) throw new Error("REPLAY_NOT_FOUND");
     const stored = await this.settings(userId); const settings = AgentSettingsV1Schema.parse({ ...stored, mode: "SHADOW" });
     const event = this.replayEvent(replayId);
-    return (await this.createRun({ settings, type: "OFFICIAL_EVENT", symbol: scenario.snapshot.symbol, event,
-      sourceMode: "LOCAL_REPLAY", analystOrigin, facts: { replayId, source: "RECORDED_OFFICIAL_FIXTURE", simulation: true },
-      dedupeSeed: randomUUID(), replayId })).run;
+    const since = new Date(this.now().getTime() - 365 * 86_400_000).toISOString();
+    const recent = await this.options.repository.listRecentRuns(userId, scenario.snapshot.symbol, since, 10_000);
+    for (const previous of recent) {
+      if (previous.sourceMode !== "LOCAL_REPLAY") continue;
+      const trigger = previous.context?.trigger ?? await this.options.repository.getTrigger(userId, previous.triggerId);
+      const previousHash = previous.context?.event?.contentHash ??
+        (typeof trigger?.facts.contentHash === "string" ? trigger.facts.contentHash : null);
+      if (trigger?.replayId === replayId && (!previousHash || previousHash === event.contentHash)) {
+        this.options.telemetry?.agentDedupe.inc();
+        return { ...previous, dedupeStatus: "SKIPPED_DUPLICATE" as const };
+      }
+    }
+    const result = await this.createRun({ settings, type: "OFFICIAL_EVENT", symbol: scenario.snapshot.symbol, event,
+      sourceMode: "LOCAL_REPLAY", analystOrigin, facts: { replayId, contentHash: event.contentHash,
+        source: "RECORDED_OFFICIAL_FIXTURE", simulation: true },
+      dedupeSeed: `replay:${event.accessionId}:${event.contentHash}`, dedupeScope: "EVENT", replayId });
+    return { ...result.run, dedupeStatus: result.created ? "QUEUED" as const : "SKIPPED_DUPLICATE" as const };
   }
 
   async runOne(now = this.now()) {
@@ -238,10 +310,11 @@ export class AgentOrchestrator {
 
   private async createRun(input: { settings: AgentSettingsV1; type: AgentTriggerType; symbol: ProductionSymbol;
     event: OfficialEventV1 | null; sourceMode: "LIVE_BITGET" | "LOCAL_REPLAY"; analystOrigin: "QWEN" | "RECORDED";
-    facts: Record<string, string | number | boolean | null>; dedupeSeed: string; replayId?: string; now?: Date;
+    facts: Record<string, string | number | boolean | null>; dedupeSeed: string; dedupeScope?: "POLICY" | "EVENT"; replayId?: string; now?: Date;
   }) {
     const now = input.now ?? this.now(); const at = now.toISOString();
-    const dedupeKey = sha(`${input.settings.userId}:${input.type}:${input.symbol}:${input.dedupeSeed}:${input.settings.policyVersion}`);
+    const policyScope = input.dedupeScope === "EVENT" ? "" : `:${input.settings.policyVersion}`;
+    const dedupeKey = sha(`${input.settings.userId}:${input.type}:${input.symbol}:${input.dedupeSeed}${policyScope}`);
     const triggerId = deterministicUuid(`agent-trigger:${dedupeKey}`);
     const runId = deterministicUuid(`agent-run:${dedupeKey}`);
     const traceId = deterministicUuid(`agent-trace:${dedupeKey}`);

@@ -54,7 +54,7 @@ export const productionApi = {
   agentRuns: (cursor?: string) => request<{ items: AgentRunV1[]; nextCursor: string | null }>(`/api/v1/agent/runs?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
   agentRun: (id: string) => request<{ run: AgentRunDetail }>(`/api/v1/agent/runs/${encodeURIComponent(id)}`),
   manualAgentShadow: (symbol: string, triggerType = "SESSION_CHANGE") => request<{ run: AgentRunV1 }>("/api/v1/agent/runs/manual-shadow", { method: "POST", body: JSON.stringify({ symbol, triggerType }) }),
-  agentReplay: (replayId: string, analyst: "RECORDED" | "QWEN") => request<{ run: AgentRunV1 }>(`/api/v1/agent/replays/${encodeURIComponent(replayId)}`, { method: "POST", body: JSON.stringify({ analyst }) }),
+  agentReplay: (replayId: string, analyst: "RECORDED" | "QWEN") => request<{ run: AgentRunV1; status: "QUEUED" | "SKIPPED_DUPLICATE" }>(`/api/v1/agent/replays/${encodeURIComponent(replayId)}`, { method: "POST", body: JSON.stringify({ analyst }) }),
   agentOutcomes: (cursor?: string) => request<{ items: AgentOutcomeV1[]; nextCursor: string | null }>(`/api/v1/agent/outcomes?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
   replays: () => request<{ scenarios: Array<{ id: string; name: string; kicker: string; description: string; symbol: string }> }>("/api/v1/replays"),
   authMe: () => request<{ authenticated: true; user: AuthenticatedUser }>("/api/v1/auth/me"),

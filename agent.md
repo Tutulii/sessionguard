@@ -37,6 +37,7 @@ Implement every requirement in `PRODUCTION_PLAN.md` and `AI_AGENT_PRODUCTION_PLA
 - [x] In-app, Telegram, email, and web-push notification channels.
 - [x] Production dashboard workflows, data labels, accessibility, and reduced motion.
 - [x] Fly web/worker topology, CI security gates, telemetry, and runbooks.
+- [x] Semantic event/replay dedupe plus durable collateral-risk episode hysteresis; legacy audit rows remain immutable and are grouped only in the console.
 - [x] Unit, integration, E2E, security, failure, load, and production-build checks pass.
 - [x] `PRODUCTION_AUDIT.md` and `AI_AGENT_PRODUCTION_AUDIT.md` map every requirement to code and test evidence with no gaps.
 
@@ -46,4 +47,4 @@ The original hackathon prototype and its audit remain recorded in `IMPLEMENTATIO
 
 ## Status
 
-**COMPLETE — production and AI-agent plans passed final comparison and release verification on 2026-09-10. See `PRODUCTION_AUDIT.md` and `AI_AGENT_PRODUCTION_AUDIT.md`.**
+**COMPLETE — production and AI-agent plans, including the 2026-09-11 semantic-dedupe hardening amendment, passed final comparison and release verification. See `PRODUCTION_AUDIT.md` and `AI_AGENT_PRODUCTION_AUDIT.md`.**

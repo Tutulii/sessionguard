@@ -33,6 +33,14 @@ export type CursorPage<T> = { items: T[]; nextCursor: string | null };
 export type AgentQueueStats = { runnable: number; leased: number; oldestRunnableAgeMs: number };
 export type AgentExecutionReservation = { runId: string; userId: string; eventId: string | null; symbol: ProductionSymbol; side: "buy" | "sell"; notionalCents: number; createdAt: string };
 export type AgentAutomaticUsage = { count: number; grossNewNotionalCents: number };
+export type CollateralRiskState = {
+  userId: string;
+  settingsVersion: string;
+  phase: "ARMED" | "ACTIVE";
+  episodeKey: string;
+  lastBandPct: number | null;
+  updatedAt: string;
+};
 export type AgentRunPatch = Partial<Omit<AgentRunV1, "id" | "traceId" | "userId" | "triggerId" | "createdAt" | "state">>;
 
 export interface AgentRepository {
@@ -44,6 +52,8 @@ export interface AgentRepository {
   getSettings(userId: string): Promise<AgentSettingsV1 | null>;
   saveSettings(settings: AgentSettingsV1): Promise<void>;
   listEnabledSettings(): Promise<AgentSettingsV1[]>;
+  getCollateralRiskState(userId: string): Promise<CollateralRiskState | null>;
+  saveCollateralRiskState(state: CollateralRiskState): Promise<void>;
   saveGrantChallenge(challenge: AgentGrantChallenge): Promise<void>;
   consumeGrantChallenge(id: string, userId: string, now: Date): Promise<AgentGrantChallenge | null>;
   saveGrant(grant: AgentGrantV1): Promise<void>;
@@ -99,6 +109,11 @@ const sqliteAgentSchema = `
     shadow_started_at TEXT, settings_json TEXT NOT NULL, updated_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS agent_settings_enabled_idx ON agent_settings(mode,updated_at);
+  CREATE TABLE IF NOT EXISTS agent_collateral_risk_states (
+    user_id TEXT PRIMARY KEY, settings_version TEXT NOT NULL,
+    phase TEXT NOT NULL CHECK (phase IN ('ARMED','ACTIVE')),
+    episode_key TEXT NOT NULL, last_band_pct INTEGER, updated_at TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS agent_grant_challenges (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, nonce TEXT NOT NULL UNIQUE, scope_hash TEXT NOT NULL,
     expires_at TEXT NOT NULL, consumed_at TEXT, challenge_json TEXT NOT NULL, created_at TEXT NOT NULL
@@ -208,6 +223,15 @@ function assertRunBundle(trigger: AgentTriggerV1, run: AgentRunV1, job: AgentJob
   }
 }
 
+function assertCollateralRiskState(state: CollateralRiskState) {
+  const validBand = state.lastBandPct === null || (Number.isInteger(state.lastBandPct) && state.lastBandPct >= 0 && state.lastBandPct <= 100);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(state.userId) ||
+    !state.settingsVersion || state.settingsVersion.length > 128 || !["ARMED", "ACTIVE"].includes(state.phase) ||
+    !state.episodeKey || state.episodeKey.length > 128 || !validBand || Number.isNaN(new Date(state.updatedAt).getTime())) {
+    throw new Error("AGENT_COLLATERAL_STATE_INVALID");
+  }
+}
+
 function assertExecutionReservation(reservation: AgentExecutionReservation, limits: { count: number; grossNewNotionalCents: number; cooldownMs: number }) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(reservation.runId) ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(reservation.userId) ||
@@ -285,6 +309,24 @@ export class SqliteAgentRepository implements AgentRepository {
     const rows = this.db.prepare("SELECT settings_json FROM agent_settings WHERE mode<>'DISABLED' ORDER BY updated_at")
       .all() as Array<{ settings_json: string }>;
     return rows.map((row) => AgentSettingsV1Schema.parse(parse(row.settings_json)));
+  }
+
+  async getCollateralRiskState(userId: string) {
+    const row = this.db.prepare(`SELECT settings_version,phase,episode_key,last_band_pct,updated_at
+      FROM agent_collateral_risk_states WHERE user_id=?`).get(userId) as {
+        settings_version: string; phase: "ARMED" | "ACTIVE"; episode_key: string;
+        last_band_pct: number | null; updated_at: string;
+      } | undefined;
+    return row ? { userId, settingsVersion: row.settings_version, phase: row.phase,
+      episodeKey: row.episode_key, lastBandPct: row.last_band_pct, updatedAt: row.updated_at } : null;
+  }
+
+  async saveCollateralRiskState(state: CollateralRiskState) {
+    assertCollateralRiskState(state);
+    this.db.prepare(`INSERT INTO agent_collateral_risk_states VALUES(?,?,?,?,?,?)
+      ON CONFLICT(user_id) DO UPDATE SET settings_version=excluded.settings_version,phase=excluded.phase,
+      episode_key=excluded.episode_key,last_band_pct=excluded.last_band_pct,updated_at=excluded.updated_at`)
+      .run(state.userId, state.settingsVersion, state.phase, state.episodeKey, state.lastBandPct, state.updatedAt);
   }
 
   async saveGrantChallenge(challenge: AgentGrantChallenge) {
@@ -563,14 +605,15 @@ export class SqliteAgentRepository implements AgentRepository {
     const outcomes = (await this.listOutcomes(userId, 10_000)).items;
     const dailyEquityBaselines = this.db.prepare("SELECT utc_date,equity_cents,captured_at FROM agent_daily_equity_baselines WHERE user_id=? ORDER BY utc_date").all(userId);
     const executionReservations = this.db.prepare("SELECT run_id,event_id,symbol,side,notional_cents,created_at FROM agent_execution_reservations WHERE user_id=? ORDER BY created_at").all(userId);
+    const collateralRiskState = await this.getCollateralRiskState(userId);
     return { settings, grants, grantChallenges: challenges, triggers, runs: runDetails.filter(Boolean), jobs,
-      outcomes, dailyEquityBaselines, executionReservations };
+      outcomes, dailyEquityBaselines, executionReservations, collateralRiskState };
   }
   async deleteUserData(userId: string) {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       for (const table of ["agent_outcomes", "agent_execution_reservations", "agent_daily_equity_baselines", "agent_jobs", "agent_run_transitions", "agent_runs", "agent_triggers",
-        "agent_grants", "agent_grant_challenges", "agent_settings"]) this.db.prepare(`DELETE FROM ${table} WHERE user_id=?`).run(userId);
+        "agent_collateral_risk_states", "agent_grants", "agent_grant_challenges", "agent_settings"]) this.db.prepare(`DELETE FROM ${table} WHERE user_id=?`).run(userId);
       this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
@@ -694,6 +737,22 @@ export class PostgresAgentRepository implements AgentRepository {
   async listEnabledSettings() {
     return (await this.pool.query("SELECT settings_json FROM agent_settings WHERE mode<>'DISABLED' ORDER BY updated_at")).rows
       .map((row) => AgentSettingsV1Schema.parse(parse(row.settings_json)));
+  }
+
+  async getCollateralRiskState(userId: string) {
+    const row = (await this.pool.query(`SELECT settings_version,phase,episode_key,last_band_pct,updated_at
+      FROM agent_collateral_risk_states WHERE user_id=$1`, [userId])).rows[0];
+    return row ? { userId, settingsVersion: String(row.settings_version), phase: row.phase as "ARMED" | "ACTIVE",
+      episodeKey: String(row.episode_key), lastBandPct: row.last_band_pct === null ? null : Number(row.last_band_pct),
+      updatedAt: iso(row.updated_at) } : null;
+  }
+
+  async saveCollateralRiskState(state: CollateralRiskState) {
+    assertCollateralRiskState(state);
+    await this.pool.query(`INSERT INTO agent_collateral_risk_states(user_id,settings_version,phase,episode_key,last_band_pct,updated_at)
+      VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(user_id) DO UPDATE SET settings_version=excluded.settings_version,
+      phase=excluded.phase,episode_key=excluded.episode_key,last_band_pct=excluded.last_band_pct,updated_at=excluded.updated_at`,
+    [state.userId, state.settingsVersion, state.phase, state.episodeKey, state.lastBandPct, state.updatedAt]);
   }
 
   async saveGrantChallenge(challenge: AgentGrantChallenge) {
@@ -943,15 +1002,16 @@ export class PostgresAgentRepository implements AgentRepository {
     const outcomes = (await this.listOutcomes(userId, 10_000)).items;
     const dailyEquityBaselines = (await this.pool.query("SELECT utc_date,equity_cents,captured_at FROM agent_daily_equity_baselines WHERE user_id=$1 ORDER BY utc_date", [userId])).rows;
     const executionReservations = (await this.pool.query("SELECT run_id,event_id,symbol,side,notional_cents,created_at FROM agent_execution_reservations WHERE user_id=$1 ORDER BY created_at", [userId])).rows;
+    const collateralRiskState = await this.getCollateralRiskState(userId);
     return { settings, grants, grantChallenges: challenges, triggers, runs: runDetails.filter(Boolean), jobs,
-      outcomes, dailyEquityBaselines, executionReservations };
+      outcomes, dailyEquityBaselines, executionReservations, collateralRiskState };
   }
   async deleteUserData(userId: string) {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       for (const table of ["agent_outcomes", "agent_execution_reservations", "agent_daily_equity_baselines", "agent_jobs", "agent_run_transitions", "agent_runs", "agent_triggers",
-        "agent_grants", "agent_grant_challenges", "agent_settings"]) await client.query(`DELETE FROM ${table} WHERE user_id=$1`, [userId]);
+        "agent_collateral_risk_states", "agent_grants", "agent_grant_challenges", "agent_settings"]) await client.query(`DELETE FROM ${table} WHERE user_id=$1`, [userId]);
       await client.query("COMMIT");
     } catch (error) { await this.rollback(client); throw error; } finally { client.release(); }
   }

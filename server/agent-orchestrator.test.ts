@@ -1,5 +1,6 @@
 import { Wallet } from "ethers";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { OfficialEventV1 } from "../shared/agent-types.js";
 import type { PortfolioSnapshot } from "../shared/production-types.js";
 import { AgentGrantService } from "./agent-grant.js";
 import { AgentOrchestrator } from "./agent-orchestrator.js";
@@ -91,16 +92,34 @@ describe("durable agent orchestrator", () => {
     });
   });
 
-  it("deduplicates one official event per user/content/policy before a second model call can exist", async () => {
+  it("deduplicates an exact local replay and reports the skipped duplicate", async () => {
+    const env = await runtime(new Date("2026-09-15T15:06:00.000Z"));
+    const first = await env.orchestrator.replay(env.user.id, "sunday-oracle", "RECORDED");
+    const stored = await env.orchestrator.settings(env.user.id);
+    await env.agent.saveSettings({ ...stored!, policyVersion: "agent-policy-next", settingsVersion: "settings-next" });
+    const duplicate = await env.orchestrator.replay(env.user.id, "sunday-oracle", "QWEN");
+    expect(first.dedupeStatus).toBe("QUEUED");
+    expect(duplicate.dedupeStatus).toBe("SKIPPED_DUPLICATE");
+    expect(duplicate.id).toBe(first.id);
+    expect((await env.agent.listRuns(env.user.id, 10)).items).toHaveLength(1);
+    expect(await env.agent.queueStats(new Date("2026-09-15T15:06:00.000Z"))).toMatchObject({ runnable: 1 });
+  });
+
+  it("deduplicates one official event per user/content even across policy revisions", async () => {
     const env = await runtime(new Date("2026-09-15T15:06:00.000Z"));
     await env.orchestrator.updateSettings(env.user.id, { mode: "SHADOW", symbols: ["RNVDAUSDT"],
       offHoursMoveThresholdBps: 100, minCollateralBufferPct: 15, automaticOrderLimitCents: 10_000,
       automaticOrdersPerDay: 5, automaticGrossNewNotionalCents: 50_000, notificationsEnabled: true });
-    const source = (env.orchestrator as unknown as { replayEvent(id: string): unknown }).replayEvent("cash-nvidia") as never;
+    const source = (env.orchestrator as unknown as { replayEvent(id: string): unknown }).replayEvent("cash-nvidia") as OfficialEventV1;
     const first = await env.orchestrator.enqueueOfficialEvent(source);
+    const stored = await env.agent.getSettings(env.user.id);
+    await env.agent.saveSettings({ ...stored!, policyVersion: "agent-policy-next", settingsVersion: "settings-next" });
     const second = await env.orchestrator.enqueueOfficialEvent(source);
     expect(first).toHaveLength(1); expect(second).toHaveLength(1); expect(second[0].id).toBe(first[0].id);
-    expect((await env.agent.listRuns(env.user.id, 10)).items).toHaveLength(1);
+    const amended = await env.orchestrator.enqueueOfficialEvent({ ...source,
+      versionId: "99999999-9999-4999-8999-999999999999", contentHash: "f".repeat(64) });
+    expect(amended[0].id).not.toBe(first[0].id);
+    expect((await env.agent.listRuns(env.user.id, 10)).items).toHaveLength(2);
   });
 
   it("keeps manual runs shadow-only and excludes them from eligibility", async () => {

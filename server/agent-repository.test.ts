@@ -183,19 +183,22 @@ describe("agent durable repository", () => {
   it("exports every tenant-owned agent category with grant proof redacted, then deletes all of it", async () => {
     const repo = repository(); await repo.init(); const value = bundle();
     await repo.saveSettings(testSettings()); await repo.saveGrant(testGrant());
+    await repo.saveCollateralRiskState({ userId: testIds.user, settingsVersion: "settings-v1", phase: "ACTIVE",
+      episodeKey: "episode-1", lastBandPct: 18, updatedAt: cashTime.toISOString() });
     await repo.createRunBundle(value.trigger, value.run, value.job, value.transition);
     await repo.getOrCreateDailyEquityBaseline(testIds.user, "2026-09-15", 500_000, cashTime.toISOString());
     await repo.reserveAutomaticExecution({ runId: value.run.id, userId: testIds.user, eventId: value.run.eventId,
       symbol: value.run.symbol, side: "buy", notionalCents: 5_000, createdAt: cashTime.toISOString() },
     { count: 5, grossNewNotionalCents: 50_000, cooldownMs: 3_600_000 });
     const exported = await repo.exportUserData(testIds.user) as Record<string, unknown>;
-    expect(Object.keys(exported).sort()).toEqual(["dailyEquityBaselines", "executionReservations", "grantChallenges", "grants", "jobs", "outcomes", "runs", "settings", "triggers"].sort());
+    expect(Object.keys(exported).sort()).toEqual(["collateralRiskState", "dailyEquityBaselines", "executionReservations", "grantChallenges", "grants", "jobs", "outcomes", "runs", "settings", "triggers"].sort());
     expect(JSON.stringify(exported)).toContain("[REDACTED]");
     expect(JSON.stringify(exported)).not.toContain(testGrant().messageHash);
     await repo.deleteUserData(testIds.user);
     expect(await repo.getSettings(testIds.user)).toBeNull();
     expect(await repo.getRun(testIds.user, value.run.id)).toBeNull();
     expect(await repo.getCurrentGrant(testIds.user)).toBeNull();
+    expect(await repo.getCollateralRiskState(testIds.user)).toBeNull();
     expect(await repo.queueStats(cashTime)).toMatchObject({ runnable: 0, leased: 0 });
   });
 });

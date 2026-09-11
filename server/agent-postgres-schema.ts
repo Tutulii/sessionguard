@@ -1,4 +1,4 @@
-export const agentSchemaVersion = "0002-agent-runtime";
+export const agentSchemaVersion = "0003-trigger-dedupe-state";
 
 export const agentSchemaSql = `
 CREATE TABLE IF NOT EXISTS official_events (
@@ -37,6 +37,15 @@ CREATE TABLE IF NOT EXISTS agent_settings (
   updated_at timestamptz NOT NULL
 );
 CREATE INDEX IF NOT EXISTS agent_settings_enabled_idx ON agent_settings(mode,updated_at);
+
+CREATE TABLE IF NOT EXISTS agent_collateral_risk_states (
+  user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  settings_version text NOT NULL,
+  phase text NOT NULL CHECK (phase IN ('ARMED','ACTIVE')),
+  episode_key text NOT NULL,
+  last_band_pct integer,
+  updated_at timestamptz NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS agent_grant_challenges (
   id uuid PRIMARY KEY,

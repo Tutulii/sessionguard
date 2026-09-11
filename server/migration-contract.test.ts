@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { agentSchemaSql, agentSchemaVersion } from "./agent-postgres-schema.js";
 import { productionSchemaSql, productionSchemaVersion } from "./postgres-schema.js";
 
 describe("reviewable production migration", () => {
@@ -16,5 +17,17 @@ describe("reviewable production migration", () => {
     expect(migration).toContain("sessionguard_protect_audit_events");
     expect(productionSchemaSql).toContain("sessionguard_protect_audit_events");
     expect(migration).toContain(`'${productionSchemaVersion}'`);
+  });
+
+  it("keeps the agent runtime and semantic-dedupe migrations reviewable", () => {
+    const runtime = readFileSync(new URL("../migrations/0002_agent_runtime.sql", import.meta.url), "utf8");
+    const dedupe = readFileSync(new URL("../migrations/0003_trigger_dedupe_state.sql", import.meta.url), "utf8");
+    for (const table of ["official_events", "agent_settings", "agent_triggers", "agent_runs", "agent_jobs", "agent_outcomes"]) {
+      expect(runtime).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
+      expect(agentSchemaSql).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
+    }
+    expect(dedupe).toContain("CREATE TABLE IF NOT EXISTS agent_collateral_risk_states");
+    expect(agentSchemaSql).toContain("CREATE TABLE IF NOT EXISTS agent_collateral_risk_states");
+    expect(dedupe).toContain(`'${agentSchemaVersion}'`);
   });
 });

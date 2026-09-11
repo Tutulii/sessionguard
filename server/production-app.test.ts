@@ -65,6 +65,7 @@ describe("production v1 API", () => {
       coordinator: new MemoryCoordinator(),
       keyManager: new LocalDataKeyManager("production-api-test-master-key-over-32-characters"),
       tradingAdapter: adapter,
+      agentRuntimeEnabled: true,
       marketFetcher: vi.fn(async () => new Response("upstream unavailable", { status: 503 })) as typeof fetch,
     });
   });
@@ -137,6 +138,22 @@ describe("production v1 API", () => {
       payload: { decisionToken: decision.decisionToken } });
     expect(replayedToken.statusCode).toBe(200);
     expect(replayedToken.json().order.id).toBe(submitted.json().order.id);
+  });
+
+  it("returns SKIPPED_DUPLICATE and keeps one run for an exact agent replay", async () => {
+    const { cookie } = await authenticate(app);
+    const first = await app.inject({ method: "POST", url: "/api/v1/agent/replays/sunday-oracle",
+      headers: { ...mutationHeaders, cookie }, payload: { analyst: "RECORDED" } });
+    expect(first.statusCode).toBe(202);
+    expect(first.json()).toMatchObject({ status: "QUEUED", run: { sourceMode: "LOCAL_REPLAY" } });
+
+    const duplicate = await app.inject({ method: "POST", url: "/api/v1/agent/replays/sunday-oracle",
+      headers: { ...mutationHeaders, cookie }, payload: { analyst: "QWEN" } });
+    expect(duplicate.statusCode).toBe(200);
+    expect(duplicate.json()).toMatchObject({ status: "SKIPPED_DUPLICATE", run: { id: first.json().run.id } });
+
+    const runs = await app.inject({ method: "GET", url: "/api/v1/agent/runs", headers: { cookie } });
+    expect(runs.json().items).toHaveLength(1);
   });
 
   it("stores only an encrypted Demo envelope and isolates every tenant", async () => {

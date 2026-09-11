@@ -65,9 +65,11 @@ jobs:
           npm run migrate
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0001_production_platform.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0002_agent_runtime.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0003_trigger_dedupe_state.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT version FROM schema_migrations WHERE version='0001-production-platform'"
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT version FROM schema_migrations WHERE version='0002-agent-runtime'"
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT to_regclass('public.agent_runs'), to_regclass('public.agent_jobs'), to_regclass('public.agent_outcomes')"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT version FROM schema_migrations WHERE version='0003-trigger-dedupe-state'"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT to_regclass('public.agent_runs'), to_regclass('public.agent_jobs'), to_regclass('public.agent_outcomes'), to_regclass('public.agent_collateral_risk_states')"
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT tgname FROM pg_trigger WHERE tgname='audit_events_immutable' AND NOT tgisinternal"
 
       - name: Desktop and mobile Chromium journeys

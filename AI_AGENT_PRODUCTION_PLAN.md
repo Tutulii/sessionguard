@@ -59,10 +59,10 @@ Keep the current two `worker` instances. Extend that process with an `AgentOrche
 
 - Keep Bitget collection at the existing five-second cadence and portfolio refresh at five minutes, plus an immediate refresh before every agent authorization and execution.
 - Poll SEC and configured IR feeds every two minutes. Use conditional requests (`ETag`/`If-Modified-Since`), bounded exponential backoff, and a descriptive `SEC_USER_AGENT`.
-- Create `OFFICIAL_EVENT` once per user, event content hash, symbol, and agent-policy version.
+- Create `OFFICIAL_EVENT` once per user, symbol, and normalized event content hash. A policy revision must not re-run unchanged source content; an amended filing with a new content hash may create a new run.
 - Create `SESSION_CHANGE` once per symbol/state transition. It is informational and cannot directly increase exposure.
 - Create `OFF_HOURS_MOVE` when the absolute move crosses the active user's deterministic threshold. Re-arm only after returning below 75% of that threshold; otherwise dedupe by symbol/session.
-- Create `COLLATERAL_RISK` when the Demo collateral buffer falls within five percentage points of the required minimum or crosses it; dedupe by two-percentage-point band for one hour.
+- Create `COLLATERAL_RISK` when the Demo collateral buffer enters the risk zone. Persist a durable episode: emit again only when the buffer worsens into a lower two-percentage-point band, then re-arm only after recovery above the risk threshold plus five percentage points. Never repeat unchanged risk on a timer or settings-only update.
 - Create one `PRE_WEEKEND_SWEEP` per enabled user at 15:45 America/New_York on Friday when the cash market is open.
 - Create `OUTCOME_DUE` jobs for decisions at the first valid cash-open quote, 60 minutes later, and the next completed cash session.
 - Manual production runs are shadow-only and can never issue an execution token or count toward PAPER_AUTO eligibility.
@@ -73,7 +73,7 @@ Keep the current two `worker` instances. Extend that process with an `AgentOrche
 - Claim jobs with `FOR UPDATE SKIP LOCKED`, a 60-second lease, worker ID, attempt count, and lease expiry. Heartbeat long Qwen work every 15 seconds.
 - A crashed lease returns to `QUEUED`; restart from the last persisted safe transition. Never repeat an already persisted assessment, decision, reservation, or submission.
 - Retry read/analysis jobs at 1, 5, and 15 minutes with jitter, then mark the run `FAILED_CLOSED`. Order submission is never blindly retried; uncertain results enter existing client-order-ID reconciliation.
-- Use deterministic keys derived from `userId + triggerId + policyVersion` for runs and from the guard decision ID for orders.
+- Use deterministic keys derived from source content identity for official/replay events, from risk episode plus band for collateral triggers, and from policy-scoped trigger identity for other runs; derive order keys from the guard decision ID.
 
 ## 4. Trusted event ingestion and Qwen analyst
 
@@ -215,11 +215,12 @@ All reads require the existing wallet session except the public replay catalogue
 
 ### PostgreSQL and Redis
 
-Create additive migration `migrations/0002_agent_runtime.sql` and keep SQLite parity for isolated tests. Add:
+Create additive migrations `migrations/0002_agent_runtime.sql` and `migrations/0003_trigger_dedupe_state.sql`, and keep SQLite parity for isolated tests. Add:
 
 - `official_events` and `official_event_versions` for normalized source metadata, evidence segments, hashes, and supersession;
 - `agent_settings` and `agent_grants` for tenant mode, limits, versions, SIWE proof hash, expiry, and revocation;
 - `agent_triggers`, `agent_jobs`, and `agent_runs` with unique dedupe keys and lease/retry state;
+- `agent_collateral_risk_states` for durable armed/active episodes and last-emitted risk bands;
 - `agent_run_transitions` as append-only state evidence;
 - `agent_outcomes` for observation windows and counterfactual measurements.
 
