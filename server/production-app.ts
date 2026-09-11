@@ -37,7 +37,7 @@ import { ProductionMarketService } from "./production-market.js";
 import { ProductionTradingService } from "./production-trading.js";
 import { ProductionDecisionTokenService } from "./production-token.js";
 import { SessionGuardTelemetry } from "./telemetry.js";
-import { validateProductionEnvironment } from "./production-config.js";
+import { isHackathonDeploymentProfile, validateProductionEnvironment } from "./production-config.js";
 import { SiweAuthService } from "./siwe-auth.js";
 import { AgentGrantScopeInputSchema, AgentGrantVerifyRequestSchema, ManualShadowRequestSchema, ReplayAgentRequestSchema, UpdateAgentSettingsSchema } from "../shared/agent-types.js";
 import { PostgresAgentRepository, SqliteAgentRepository, type AgentRepository } from "./agent-repository.js";
@@ -127,7 +127,10 @@ export async function createProductionApp(options: ProductionAppOptions = {}) {
   })();
   const keyManager = options.keyManager ?? (() => {
     if (process.env.KMS_KEY_ID) return new AwsKmsDataKeyManager(process.env.KMS_KEY_ID, process.env.AWS_REGION ?? "ap-southeast-1");
-    if (!allowLocal) throw new Error("KMS_KEY_ID is required in production");
+    if (isHackathonDeploymentProfile() && process.env.LOCAL_KMS_MASTER_KEY) {
+      return new LocalDataKeyManager(process.env.LOCAL_KMS_MASTER_KEY, "FLY_SECRET_AES256_GCM");
+    }
+    if (!allowLocal) throw new Error("KMS_KEY_ID or hackathon secret-wrapped key is required in production");
     return new LocalDataKeyManager(process.env.LOCAL_KMS_MASTER_KEY ?? "local-kms-master-key-at-least-32-characters");
   })();
 

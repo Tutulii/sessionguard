@@ -67,4 +67,26 @@ describe("production security gates", () => {
     process.env.METRICS_TOKEN = process.env.ADMIN_TOKEN;
     expect(() => validateProductionEnvironment(true, false)).toThrow("must be independent");
   });
+
+  it("permits the explicit hackathon profile without weakening database, Redis, or independent-secret gates", () => {
+    for (const key of ["KMS_KEY_ID", "RESEND_API_KEY", "EMAIL_FROM", "TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_NAME",
+      "VAPID_SUBJECT", "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "SENTRY_DSN", "OTEL_EXPORTER_OTLP_ENDPOINT"]) {
+      delete process.env[key];
+    }
+    Object.assign(process.env, {
+      SESSIONGUARD_DEPLOYMENT_PROFILE: "HACKATHON",
+      AGENT_RUNTIME_ENABLED: "0",
+      APP_ORIGIN: "https://sessionguard.test",
+      DATABASE_URL: "postgres://private/test",
+      REDIS_URL: "rediss://private",
+      LOCAL_KMS_MASTER_KEY: "k".repeat(32),
+      DECISION_SIGNING_KEY: "d".repeat(32),
+      ADMIN_TOKEN: "a".repeat(32),
+      METRICS_TOKEN: "m".repeat(32),
+      TELEGRAM_WEBHOOK_SECRET: "t".repeat(32),
+    });
+    expect(() => validateProductionEnvironment(true, false)).not.toThrow();
+    delete process.env.LOCAL_KMS_MASTER_KEY;
+    expect(() => validateProductionEnvironment(true, false)).toThrow("LOCAL_KMS_MASTER_KEY");
+  });
 });

@@ -1,6 +1,6 @@
 # SessionGuard Production Operations
 
-This runbook operates the paper-only, Bitget-only public beta defined in `PRODUCTION_PLAN.md`. It never authorizes live-money execution or an AI/chatbot runtime.
+This runbook operates the paper-only, Bitget-only public beta defined in `PRODUCTION_PLAN.md` and its additive agent plan. It never authorizes live-money execution. Qwen proposes actions inside the event loop; deterministic policy alone grants or denies a short-lived Bitget Demo capability.
 
 ## Service topology
 
@@ -20,6 +20,22 @@ fly status
 ```
 
 Do not set `SESSIONGUARD_ALLOW_LOCAL_INFRA=1` in Fly. SQLite, the memory coordinator, local KMS, and replay fixtures are test/local facilities only.
+
+### Authorized hackathon deployment profile
+
+The public hackathon demo uses `SESSIONGUARD_DEPLOYMENT_PROFILE=HACKATHON`: one 512 MB web Machine, one 512 MB worker Machine, a single-node Fly Postgres development cluster, and Upstash Redis pay-as-you-go with eviction, automatic plan upgrades, and ProdPack disabled. This profile is deliberately economical and is **not** the high-availability public-beta topology above.
+
+PostgreSQL and Redis remain mandatory and readiness still fails closed if either dependency is unavailable. Bitget execution remains Demo-only. Provider notifications and external Sentry/OTLP delivery are optional in this profile; in-app evidence, metrics endpoints, and structured logs remain available.
+
+The profile encrypts each Bitget credential record with AES-256-GCM and wraps its per-record data key with an independent, high-entropy `LOCAL_KMS_MASTER_KEY` stored as a Fly secret. Audit records identify this provider as `FLY_SECRET_AES256_GCM`. It is a practical hackathon deployment boundary, not a claim of hardware-backed or independently managed AWS KMS. Move to the default profile, AWS KMS, managed HA PostgreSQL/Redis, and two Machines per process group before a real public beta.
+
+For this profile, deploy and verify the economical process counts with:
+
+```bash
+fly deploy --config fly.toml
+fly scale count web=1 worker=1 --region sin
+fly status
+```
 
 ## Required configuration
 

@@ -4,7 +4,7 @@ Audit date: 2026-09-11
 Audited contract: `PRODUCTION_PLAN.md`, `AI_AGENT_PRODUCTION_PLAN.md`, and `agent.md`
 Result: **100% of the planned production-beta platform and its additive AI-agent extension are present, tested, and documented. No implementation gaps remain.**
 
-This verdict covers the deliberately narrow code and delivery scope: Bitget-only rToken data, deterministic permissions, local replay, and Bitget Demo/paper execution for rNVDA, rTSLA, and rORCL. It does not claim that a public Fly deployment, managed-cloud restore drill, or phased user rollout has occurred. Those are operator-controlled launch activities that require production accounts, secrets, and approval; the configuration, gates, dashboards, and runbooks for them are included.
+This verdict covers the deliberately narrow code and delivery scope: Bitget-only rToken data, deterministic permissions, local replay, and Bitget Demo/paper execution for rNVDA, rTSLA, and rORCL. A cost-controlled Fly hackathon deployment was subsequently authorized; it does not claim the HA topology, managed-cloud restore drill, or phased public rollout. The profile and its explicit security/availability tradeoffs are documented in `OPERATIONS.md`.
 
 ## Final verification evidence
 

@@ -8,7 +8,7 @@ import { ProductionMarketService } from "./production-market.js";
 import { ProductionTradingService } from "./production-trading.js";
 import { ProductionDecisionTokenService } from "./production-token.js";
 import { SessionGuardTelemetry } from "./telemetry.js";
-import { validateProductionEnvironment } from "./production-config.js";
+import { isHackathonDeploymentProfile, validateProductionEnvironment } from "./production-config.js";
 import { platformPolicy, supportedSymbols } from "../shared/production-types.js";
 import { PostgresAgentRepository, SqliteAgentRepository, type AgentRepository } from "./agent-repository.js";
 import { AgentGrantService } from "./agent-grant.js";
@@ -40,10 +40,16 @@ export async function createProductionWorker(options: ProductionWorkerOptions = 
   const coordinator = options.coordinator ?? (process.env.REDIS_URL
     ? new RedisCoordinator(process.env.REDIS_URL)
     : allowLocal ? new MemoryCoordinator() : (() => { throw new Error("REDIS_URL is required in production"); })());
-  const keyManager = options.keyManager ?? (process.env.KMS_KEY_ID
-    ? new AwsKmsDataKeyManager(process.env.KMS_KEY_ID, process.env.AWS_REGION ?? "ap-southeast-1")
-    : allowLocal ? new LocalDataKeyManager(process.env.LOCAL_KMS_MASTER_KEY ?? "local-kms-master-key-at-least-32-characters")
-      : (() => { throw new Error("KMS_KEY_ID is required in production"); })());
+  const keyManager = options.keyManager ?? (() => {
+    if (process.env.KMS_KEY_ID) {
+      return new AwsKmsDataKeyManager(process.env.KMS_KEY_ID, process.env.AWS_REGION ?? "ap-southeast-1");
+    }
+    if (isHackathonDeploymentProfile() && process.env.LOCAL_KMS_MASTER_KEY) {
+      return new LocalDataKeyManager(process.env.LOCAL_KMS_MASTER_KEY, "FLY_SECRET_AES256_GCM");
+    }
+    if (!allowLocal) throw new Error("KMS_KEY_ID or hackathon secret-wrapped key is required in production");
+    return new LocalDataKeyManager(process.env.LOCAL_KMS_MASTER_KEY ?? "local-kms-master-key-at-least-32-characters");
+  })();
   await repository.init();
   const agentRepository = options.agentRepository ?? (process.env.DATABASE_URL
     ? new PostgresAgentRepository(process.env.DATABASE_URL, { ssl: process.env.DATABASE_SSL === "1" })

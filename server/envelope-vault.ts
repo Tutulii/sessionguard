@@ -14,10 +14,9 @@ function aad(userId: string, purpose: string) {
 }
 
 export class LocalDataKeyManager implements DataKeyManager {
-  readonly provider = "LOCAL_TEST_KMS";
   private readonly wrappingKey: Buffer;
 
-  constructor(masterKey: string) {
+  constructor(masterKey: string, readonly provider = "LOCAL_TEST_KMS") {
     if (masterKey.length < 32) throw new Error("LOCAL_KMS_MASTER_KEY must contain at least 32 characters");
     this.wrappingKey = createHash("sha256").update(masterKey).digest();
   }

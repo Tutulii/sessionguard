@@ -51,7 +51,9 @@ describe("production observability and deployment artifacts", () => {
     expect(docker).toContain('CMD ["node", "--import", "./dist-server/server/instrumentation.js"');
     expect(fly).toContain('web = "node --import ./dist-server/server/instrumentation.js');
     expect(fly).toContain('worker = "node --import ./dist-server/server/instrumentation.js');
-    expect(fly).toContain('min_machines_running = 2');
+    expect(fly).toContain('SESSIONGUARD_DEPLOYMENT_PROFILE = "HACKATHON"');
+    expect(fly).toContain('min_machines_running = 1');
+    expect(fly).toContain('processes = ["worker"]');
     expect(rules).toContain("SessionGuardDuplicateOrderAttempt");
     expect(rules).toContain("SessionGuardWorkerStale");
     expect(dashboard.uid).toBe("sessionguard-production");

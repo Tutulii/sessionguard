@@ -2,7 +2,7 @@
 
 SessionGuard is deterministic risk infrastructure for Bitget rTokens. It prevents traders—and future automated callers—from treating a 24/7 rToken quote as if it were current US cash-market price discovery.
 
-The production beta is intentionally narrow: rNVDA, rTSLA, and rORCL; Bitget-only market data; local replay or Bitget Demo execution; and a hard cap of 500 wallet-authenticated users. There is no AI agent, chatbot, licensed US-equity feed, or live-money order path in this release.
+The production beta is intentionally narrow: rNVDA, rTSLA, and rORCL; Bitget-only market data; local replay or Bitget Demo execution; and a hard cap of 500 wallet-authenticated users. SessionGuard includes an event-driven Qwen proposal agent, not a chatbot. The model has no order tool: deterministic policy can grant only a short-lived Demo capability. There is no licensed US-equity feed or live-money order path.
 
 ## Product boundary
 
@@ -53,7 +53,7 @@ Important implementation entry points:
 - `server/production-worker.ts` — background market, portfolio, alert, delivery, retention, and reconciliation work.
 - `src/pages/ProductionDashboardPage.tsx` and `src/components/ReplayMarketTimeline.tsx` — responsive control room and deterministic tick-by-tick replay player with reduced-motion handling.
 
-The earlier hackathon prototype remains in compatibility files for historical tests, but the deployed entry points are `createProductionApp` and `ProductionDashboardPage`. The future agent design is documented separately in `ADVANCED_AGENT_ARCHITECTURE.md` and is not part of this runtime.
+The earlier hackathon prototype remains in compatibility files for historical tests, but the deployed entry points are `createProductionApp`, `createProductionWorker`, and `ProductionDashboardPage`. The event-driven agent design in `ADVANCED_AGENT_ARCHITECTURE.md` and `AI_AGENT_PRODUCTION_PLAN.md` is part of this runtime.
 
 ## Run locally
 
@@ -92,6 +92,8 @@ Copy `.env.example` as a reference; do not commit a populated environment file. 
 For the production image, pass the browser DSN during the build: `fly deploy --build-arg VITE_SENTRY_DSN=https://<public-sentry-dsn>`. A Sentry DSN is public routing metadata, but all provider credentials remain runtime secrets.
 
 Bitget Demo keys belong to each user and are entered at runtime. They are validated, envelope-encrypted, and stored per tenant; they are never shared server environment variables.
+
+The deployed hackathon demo uses the explicit `HACKATHON` profile documented in `OPERATIONS.md`: PostgreSQL and Redis remain mandatory, but external notification/observability providers are optional and credential data-key wrapping uses a high-entropy Fly secret instead of AWS KMS. This is a cost-controlled demo topology, not the HA public-beta topology.
 
 ## API surface
 
