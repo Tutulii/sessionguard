@@ -46,6 +46,9 @@
 .agent-hero-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 1.1rem; margin-top: 1.8rem; }
 .agent-hero-actions > span { align-items: center; color: #496159; display: flex; font-size: .72rem; font-weight: 750; gap: .4rem; }
 .agent-hero-actions > span svg { color: #3e846c; height: 17px; width: 17px; }
+.agent-hero-actions .agent-demo-boundary > span { display: grid; gap: .05rem; }
+.agent-hero-actions .agent-demo-boundary strong { color: var(--agent-ink); font-size: .68rem; }
+.agent-hero-actions .agent-demo-boundary small { color: #5c7068; font-size: .57rem; font-weight: 650; }
 .agent-hero-stamp { align-items: center; aspect-ratio: 1; background: var(--agent-gold); border: 3px solid var(--agent-ink); border-radius: 50%; box-shadow: 9px 10px 0 var(--agent-ink); display: flex; flex-direction: column; justify-content: center; position: relative; transform: rotate(5deg); }
 .agent-hero-stamp::before { border: 1px dashed var(--agent-ink); border-radius: inherit; content: ""; inset: 9px; position: absolute; }
 .agent-hero-stamp svg { height: 34px; width: 34px; }

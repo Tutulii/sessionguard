@@ -100,8 +100,8 @@ export function LandingPage() {
             </motion.p>
             <motion.div
               className="hero-actions"
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
+              initial={{ y: 16 }}
+              animate={{ y: 0 }}
               transition={{ delay: 0.42 }}
             >
               <Link className="button button-coral button-large" to="/app?replay=sunday-oracle">
@@ -123,8 +123,8 @@ export function LandingPage() {
 
           <motion.div
             className="hero-art"
-            initial={{ opacity: 0, scale: 0.92, rotate: 1.5 }}
-            animate={{ opacity: 1, scale: 1, rotate: 0 }}
+            initial={{ scale: 0.92, rotate: 1.5 }}
+            animate={{ scale: 1, rotate: 0 }}
             transition={{ delay: 0.25, duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
           >
             <div className="price-note note-top">

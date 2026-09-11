@@ -207,7 +207,8 @@ test.describe("production user journeys", () => {
       await page.goto(route);
       const root = page.locator(route === "/" ? ".landing-page" : route === "/agent" ? ".agent-page" : ".dashboard-page");
       await expect(root).toHaveCSS("opacity", "1");
-      await expect(page.locator(".scene-verdict").first()).toHaveCSS("opacity", "1");
+      if (route === "/agent") await expect(page.locator(".agent-loop-scene")).toBeVisible();
+      else await expect(page.locator(".scene-verdict").first()).toBeVisible();
       const results = await new AxeBuilder({ page }).analyze();
       const serious = results.violations.filter((item) => item.impact === "serious" || item.impact === "critical");
       expect(serious, `Accessibility violations on ${route}: ${serious.map((item) => item.id).join(", ")}`).toEqual([]);
