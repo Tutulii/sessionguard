@@ -13,7 +13,7 @@ ENV NODE_ENV=production
 RUN apk upgrade --no-cache \
   && addgroup -S sessionguard \
   && adduser -S -G sessionguard sessionguard
-COPY package*.json ./
+COPY --chown=sessionguard:sessionguard package*.json ./
 RUN npm ci --omit=dev \
   && npm cache clean --force \
   && rm -rf /usr/local/lib/node_modules/npm \

@@ -49,6 +49,7 @@ describe("production observability and deployment artifacts", () => {
 
     expect(docker).toContain("ARG VITE_SENTRY_DSN");
     expect(docker).toContain('CMD ["node", "--import", "./dist-server/server/instrumentation.js"');
+    expect(docker).toContain("COPY --chown=sessionguard:sessionguard package*.json ./");
     expect(fly).toContain('web = "node --import ./dist-server/server/instrumentation.js');
     expect(fly).toContain('worker = "node --import ./dist-server/server/instrumentation.js');
     expect(fly).toContain('SESSIONGUARD_DEPLOYMENT_PROFILE = "HACKATHON"');
