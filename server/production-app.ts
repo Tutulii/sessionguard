@@ -108,6 +108,11 @@ export async function createProductionApp(options: ProductionAppOptions = {}) {
   const signingKey = process.env.DECISION_SIGNING_KEY ?? process.env.SESSION_MASTER_KEY ?? (allowLocal ? "local-decision-signing-key-at-least-32-characters" : "");
   const userCap = Number(process.env.PUBLIC_BETA_USER_CAP ?? 500);
   if (!Number.isInteger(userCap) || userCap < 1 || userCap > 500) throw new Error("PUBLIC_BETA_USER_CAP must be an integer from 1 to 500");
+  const configuredLocalAuthRateLimit = Number(process.env.SESSIONGUARD_LOCAL_AUTH_RATE_LIMIT_MAX ?? 10);
+  if (!Number.isInteger(configuredLocalAuthRateLimit) || configuredLocalAuthRateLimit < 10 || configuredLocalAuthRateLimit > 100) {
+    throw new Error("SESSIONGUARD_LOCAL_AUTH_RATE_LIMIT_MAX must be an integer from 10 to 100");
+  }
+  const authRateLimitMax = allowLocal ? configuredLocalAuthRateLimit : 10;
   if (signingKey.length < 32) throw new Error("DECISION_SIGNING_KEY is required and must contain at least 32 characters");
 
   const repository = options.repository ?? (() => {
@@ -332,14 +337,14 @@ export async function createProductionApp(options: ProductionAppOptions = {}) {
   });
 
   app.post("/api/v1/auth/nonce", async (request, reply) => {
-    if (!await rate(request, reply, "auth-nonce", 10)) return;
+    if (!await rate(request, reply, "auth-nonce", authRateLimitMax)) return;
     const parsed = SiweNonceRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_AUTH_REQUEST" });
     return auth.createChallenge(parsed.data.address);
   });
 
   app.post("/api/v1/auth/verify", async (request, reply) => {
-    if (!await rate(request, reply, "auth-verify", 10)) return;
+    if (!await rate(request, reply, "auth-verify", authRateLimitMax)) return;
     const parsed = SiweVerifyRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "INVALID_AUTH_PROOF" });
     try {

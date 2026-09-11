@@ -72,6 +72,34 @@ describe("production v1 API", () => {
 
   afterEach(async () => { await app.close(); });
 
+  it("honors a bounded authentication rate override only for local acceptance infrastructure", async () => {
+    const previous = process.env.SESSIONGUARD_LOCAL_AUTH_RATE_LIMIT_MAX;
+    process.env.SESSIONGUARD_LOCAL_AUTH_RATE_LIMIT_MAX = "12";
+    let rateApp: TestApp | null = null;
+    try {
+      rateApp = await createProductionApp({
+        production: false,
+        appOrigin: origin,
+        repository: new SqlitePlatformRepository(),
+        coordinator: new MemoryCoordinator(),
+        keyManager: new LocalDataKeyManager("local-rate-limit-test-key-over-32-characters"),
+        tradingAdapter: new FakeDemoAdapter(),
+      });
+      const wallet = Wallet.createRandom();
+      const statuses: number[] = [];
+      for (let attempt = 0; attempt < 13; attempt += 1) {
+        const response = await rateApp.inject({ method: "POST", url: "/api/v1/auth/nonce", headers: mutationHeaders,
+          payload: { address: wallet.address, chainId: 42161 } });
+        statuses.push(response.statusCode);
+      }
+      expect(statuses).toEqual([...Array.from({ length: 12 }, () => 200), 429]);
+    } finally {
+      await rateApp?.close();
+      if (previous === undefined) delete process.env.SESSIONGUARD_LOCAL_AUTH_RATE_LIMIT_MAX;
+      else process.env.SESSIONGUARD_LOCAL_AUTH_RATE_LIMIT_MAX = previous;
+    }
+  });
+
   it("enforces request-origin guards and single-use SIWE proof", async () => {
     const wallet = Wallet.createRandom();
     const missingGuard = await app.inject({ method: "POST", url: "/api/v1/auth/nonce", payload: { address: wallet.address, chainId: 42161 } });

@@ -24,7 +24,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run build && SESSIONGUARD_ALLOW_LOCAL_INFRA=1 PLATFORM_DATABASE_PATH=.data/e2e-platform.sqlite LOCAL_KMS_MASTER_KEY=sessionguard-e2e-local-kms-key-over-32-characters DECISION_SIGNING_KEY=sessionguard-e2e-decision-key-over-32-characters APP_ORIGIN=http://127.0.0.1:8791 PORT=8791 npm start",
+    command: "npm run build && SESSIONGUARD_ALLOW_LOCAL_INFRA=1 SESSIONGUARD_LOCAL_AUTH_RATE_LIMIT_MAX=100 PLATFORM_DATABASE_PATH=.data/e2e-platform.sqlite LOCAL_KMS_MASTER_KEY=sessionguard-e2e-local-kms-key-over-32-characters DECISION_SIGNING_KEY=sessionguard-e2e-decision-key-over-32-characters APP_ORIGIN=http://127.0.0.1:8791 PORT=8791 npm start",
     url: "http://127.0.0.1:8791/api/health",
     reuseExistingServer: true,
     timeout: 120_000,
