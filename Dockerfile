@@ -10,9 +10,14 @@ RUN npm run build
 FROM node:24-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
-RUN addgroup -S sessionguard && adduser -S -G sessionguard sessionguard
+RUN apk upgrade --no-cache \
+  && addgroup -S sessionguard \
+  && adduser -S -G sessionguard sessionguard
 COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev \
+  && npm cache clean --force \
+  && rm -rf /usr/local/lib/node_modules/npm \
+  && rm -f /usr/local/bin/npm /usr/local/bin/npx
 COPY --from=build --chown=sessionguard:sessionguard /app/dist ./dist
 COPY --from=build --chown=sessionguard:sessionguard /app/dist-server ./dist-server
 COPY --from=build --chown=sessionguard:sessionguard /app/migrations ./migrations
