@@ -119,3 +119,10 @@ This verdict covers the deliberately narrow code and delivery scope: Bitget-only
 Every `PRODUCTION_PLAN.md` requirement and every additive `AI_AGENT_PRODUCTION_PLAN.md` requirement has a concrete implementation location and test or operational evidence. The semantic-dedupe follow-up guarantees one decision per unchanged event, durable collateral-risk episodes, and console-only grouping of immutable legacy rows. GitHub production-gates run `34550082271` passed all 239 tests, 20 applicable browser journeys, PostgreSQL migrations, the production image build, and a zero-high/zero-critical Trivy scan. No TODO, FIXME, placeholder, contradictory price-source wording, unversioned private route, live-money path, or unresolved implementation item remains.
 
 **Implementation status: COMPLETE.** Public rollout remains intentionally gated by production secrets, managed services, external CI/container execution, restore/security exercises, and operator approval described in `OPERATIONS.md`.
+
+
+## AI deterministic risk-sizing amendment — 2026-09-11
+
+The additive AI plan now treats $250 as an absolute signed/system ceiling while retaining a $100 least-privilege default. server/agent-guard.ts calculates equity, exposure, correlated-stress, spendable, daily, confidence, Bitget-liquidity, and event-risk constraints; shared/agent-types.ts persists the complete sizing explanation; and the agent run drawer displays it. The amended roadmap comparison is recorded in AI_AGENT_PRODUCTION_AUDIT.md.
+
+Local verification: npm run check passed 245 tests with two external-infrastructure skips, zero audit vulnerabilities, clean secret and Demo-only execution scans, and a successful production build. The running local service also passed npm run synthetic:smoke.

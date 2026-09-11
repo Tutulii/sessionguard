@@ -74,7 +74,7 @@ export function assembleAgentContext(input: AgentContextInput): AgentContextV1 {
       ageMinutes: Math.max(0, rounded((now.getTime() - new Date(run.createdAt).getTime()) / 60_000)),
     })),
     outstandingOrder: input.outstandingOrder,
-    // Qwen may express intent up to the platform proposal ceiling; deterministic code applies the stricter $100 agent/user/grant cap.
+    // Qwen may express intent up to $250; deterministic code applies the signed ceiling and usually authorizes less through portfolio and market risk sizing.
     platformMaximumNotionalCents: platformPolicy.maxPaperOrderCents,
     policyVersion: settings.policyVersion,
     settingsVersion: settings.settingsVersion,

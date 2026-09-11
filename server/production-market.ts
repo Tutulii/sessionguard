@@ -17,7 +17,7 @@ const BITGET_BASE_URL = "https://api.bitget.com";
 
 type BitgetResponse<T> = { code: string; msg: string; data: T };
 type Ticker = { symbol: string; ts: string; lastPrice: string; ask1Price: string; bid1Price: string };
-type CandlePoint = { startMs: number; closeMicros: number };
+type CandlePoint = { startMs: number; openMicros: number; closeMicros: number };
 type Fetcher = typeof fetch;
 
 function micros(value: string | number) {
@@ -33,7 +33,7 @@ function bps(current: number, reference: number) {
 function parseCandles(data: unknown): CandlePoint[] {
   if (!Array.isArray(data)) return [];
   return data.filter((row): row is unknown[] => Array.isArray(row) && row.length >= 5)
-    .map((row) => ({ startMs: Number(row[0]), closeMicros: micros(Number(row[4])) }))
+    .map((row) => ({ startMs: Number(row[0]), openMicros: micros(Number(row[1])), closeMicros: micros(Number(row[4])) }))
     .filter((point) => Number.isFinite(point.startMs) && point.closeMicros > 0)
     .sort((left, right) => left.startMs - right.startMs);
 }
@@ -156,6 +156,34 @@ export class ProductionMarketService {
       && close.getTime() - (point.startMs + 60_000) <= 30 * 60_000).at(-1);
     if (!selected) throw new Error("OUTCOME_FINAL_BITGET_CANDLE_MISSING");
     return { priceMicros: selected.closeMicros, observedAt: new Date(selected.startMs + 60_000).toISOString() };
+  }
+
+  /** Recover the first completed Bitget one-minute observation within five minutes after a missed target. */
+  async completedObservationCandle(symbol: ProductionSymbol, target: Date, now = new Date()) {
+    const targetMs = target.getTime();
+    if (!Number.isFinite(targetMs)) throw new Error("OUTCOME_OBSERVATION_TIME_INVALID");
+    const candleStartMs = Math.ceil(targetMs / 60_000) * 60_000;
+    const earliestCompletedMs = candleStartMs + 60_000;
+    const recoveryWindowEndMs = candleStartMs + 5 * 60_000;
+    if (now.getTime() < earliestCompletedMs) throw new Error("OUTCOME_OBSERVATION_CANDLE_NOT_COMPLETE");
+    const params = new URLSearchParams({
+      category: "SPOT",
+      symbol,
+      interval: "1m",
+      startTime: String(candleStartMs),
+      endTime: String(recoveryWindowEndMs + 60_000),
+      limit: "7",
+    });
+    const points = parseCandles(await this.bitget<unknown>(`/api/v3/market/candles?${params}`));
+    const selected = points.find((point) => point.startMs >= candleStartMs && point.startMs <= recoveryWindowEndMs
+      && point.startMs + 60_000 <= now.getTime());
+    if (!selected) throw new Error("OUTCOME_BOUNDED_BITGET_CANDLE_MISSING");
+    return {
+      priceMicros: selected.openMicros,
+      observedAt: new Date(selected.startMs).toISOString(),
+      completedAt: new Date(selected.startMs + 60_000).toISOString(),
+      source: "BITGET_COMPLETED_1M_CANDLE" as const,
+    };
   }
 
   private replaySnapshot(symbol: ProductionSymbol, replayId: string | undefined, now: Date): ProductionMarketSnapshot {

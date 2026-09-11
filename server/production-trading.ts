@@ -250,7 +250,9 @@ export class ProductionTradingService {
     if (authorization.guardDecision) await this.repository.saveDecision(authorization.guardDecision);
     await this.repository.saveAudit(input.userId, "AGENT_PROPOSAL_AUTHORIZED", input.runId,
       { permission: authorization.permission, reasonCodes: authorization.reasonCodes, requestedNotionalCents: authorization.requestedNotionalCents,
-        allowedNotionalCents: authorization.allowedNotionalCents, contextHash: input.context.contextHash });
+        allowedNotionalCents: authorization.allowedNotionalCents, riskSizedNotionalCents: authorization.sizing?.riskSizedNotionalCents ?? null,
+        configuredCeilingCents: authorization.sizing?.configuredCeilingCents ?? null,
+        sizingFactors: authorization.sizing?.limitingFactors.join(",") ?? null, contextHash: input.context.contextHash });
     let capability: { token: string; expiresAt: string } | null = null;
     if (authorization.permission === "TRADE" && input.settings.mode === "PAPER_AUTO" && authorization.guardDecision) {
       const grant = guardInput.grant;

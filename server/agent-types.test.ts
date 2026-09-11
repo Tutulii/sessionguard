@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AgentAssessmentV1Schema,
+  defaultAgentSettings,
   AgentGrantScopeInputSchema,
   AgentRunStateSchema,
   AgentSettingsV1Schema,
@@ -26,6 +27,12 @@ describe("agent versioned contracts and explicit state machine", () => {
     expect(() => AgentAssessmentV1Schema.parse({ ...testAssessment(), tool: "placeOrder" })).toThrow();
     expect(() => AgentAssessmentV1Schema.parse({ ...testAssessment(), proposedNotionalCents: 25_001 })).toThrow();
     expect(() => AgentAssessmentV1Schema.parse({ ...testAssessment(), confidence: 1.01 })).toThrow();
+  });
+
+  it("defaults to a $100 ceiling but accepts an explicitly tightened/signed ceiling up to $250", () => {
+    expect(defaultAgentSettings("11111111-1111-4111-8111-111111111111").automaticOrderLimitCents).toBe(10_000);
+    expect(AgentSettingsV1Schema.safeParse({ ...testSettings(), automaticOrderLimitCents: 25_000 }).success).toBe(true);
+    expect(AgentSettingsV1Schema.safeParse({ ...testSettings(), automaticOrderLimitCents: 25_001 }).success).toBe(false);
   });
 
   it("rejects duplicate symbols/actions and direct PAPER_AUTO settings", () => {

@@ -4,6 +4,7 @@ import {
   type AgentAuthorizationV1,
   type AgentContextV1,
   type AgentGrantV1,
+  type AgentRiskSizingV1,
   type AgentSettingsV1,
   type OfficialEventV1,
 } from "../shared/agent-types.js";
@@ -36,6 +37,118 @@ export type AgentGuardInput = {
   now?: Date;
 };
 
+const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
+const nonnegativeFloor = (value: number) => Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
+
+function confidenceMultiplierBps(action: AgentAssessmentV1["action"], confidence: number) {
+  const minimum = action === "REDUCE" ? agentPolicy.minimumReduceConfidence : agentPolicy.minimumBuyConfidence;
+  if (confidence < minimum) return 0;
+  return Math.round(5_000 + 5_000 * clamp((confidence - minimum) / Math.max(0.01, 1 - minimum), 0, 1));
+}
+
+function liquidityMultiplierBps(input: AgentGuardInput) {
+  const tolerance = input.market.session === "CASH_OPEN"
+    ? input.userPolicy.maxCashSpreadBps
+    : input.userPolicy.maxExtendedSpreadBps;
+  return Math.round(10_000 - 5_000 * clamp(input.market.spreadBps / Math.max(1, tolerance), 0, 1));
+}
+
+function eventMultiplierBps(input: AgentGuardInput) {
+  if (input.assessment.action === "REDUCE") return 10_000;
+  let multiplier = input.event?.formType === "10-Q" || input.event?.formType === "10-K" ? 5_000
+    : input.event?.formType === "IR_RELEASE" ? 7_000
+      : input.event?.formType === "8-K" || input.event?.formType === "6-K" ? 8_000 : 6_500;
+  if (input.event?.cautionFlags.includes("LATE_DETECTION")) multiplier = Math.min(multiplier, 6_000);
+  if (input.event?.cautionFlags.includes("CORRECTION")) multiplier = Math.min(multiplier, 4_000);
+  if (input.event?.cautionFlags.includes("POSSIBLE_SUSPENSION_LANGUAGE")) multiplier = Math.min(multiplier, 2_500);
+  return multiplier;
+}
+
+export function calculateAgentRiskSizing(input: AgentGuardInput): AgentRiskSizingV1 {
+  const action = input.assessment.action;
+  const requested = input.assessment.proposedNotionalCents;
+  const configuredCeilingCents = Math.min(
+    agentPolicy.maxAutomaticOrderCents,
+    input.context.platformMaximumNotionalCents,
+    input.userPolicy.maxPaperOrderCents,
+    input.settings.automaticOrderLimitCents,
+    input.grant?.automaticOrderLimitCents ?? agentPolicy.maxAutomaticOrderCents,
+  );
+  const equity = Math.max(1, input.portfolio.accountEquityCents);
+  const current = input.portfolio.positions.find((position) => position.symbol === input.assessment.symbol)?.marketValueCents ?? 0;
+  const aggregate = input.portfolio.positions.reduce((sum, position) => sum + position.marketValueCents, 0);
+  const dailyGross = Math.min(
+    input.settings.automaticGrossNewNotionalCents,
+    input.grant?.automaticGrossNewNotionalCents ?? agentPolicy.maxAutomaticGrossNewNotionalCents,
+  );
+  const requiredBuffer = Math.max(input.userPolicy.minCollateralBufferPct, input.settings.minCollateralBufferPct);
+  const stressCapacity = (input.portfolio.collateralBufferPct - requiredBuffer) / 12 * equity;
+  const increasing = action === "BUY";
+  const equityCapCents = increasing
+    ? nonnegativeFloor(equity * agentPolicy.maxAutomaticOrderEquityPct / 100)
+    : configuredCeilingCents;
+  const singleNameHeadroomCents = increasing
+    ? nonnegativeFloor(equity * agentPolicy.maximumSingleNameExposurePct / 100 - current)
+    : current;
+  const aggregateHeadroomCents = increasing
+    ? nonnegativeFloor(equity * agentPolicy.maximumAggregateExposurePct / 100 - aggregate)
+    : current;
+  const collateralStressHeadroomCents = increasing
+    ? nonnegativeFloor(stressCapacity - aggregate)
+    : current;
+  const spendableBalanceCents = increasing ? nonnegativeFloor(input.portfolio.availableBalanceCents) : current;
+  const dailyHeadroomCents = increasing
+    ? nonnegativeFloor(dailyGross - input.automaticUsage.grossNewNotionalCents)
+    : configuredCeilingCents;
+  const preMultiplierCents = Math.min(
+    requested,
+    configuredCeilingCents,
+    equityCapCents,
+    singleNameHeadroomCents,
+    aggregateHeadroomCents,
+    collateralStressHeadroomCents,
+    spendableBalanceCents,
+    dailyHeadroomCents,
+  );
+  const confidenceBps = confidenceMultiplierBps(action, input.assessment.confidence);
+  const liquidityBps = liquidityMultiplierBps(input);
+  const eventBps = eventMultiplierBps(input);
+  const riskSizedNotionalCents = nonnegativeFloor(
+    preMultiplierCents * confidenceBps / 10_000 * liquidityBps / 10_000 * eventBps / 10_000,
+  );
+  const limitingFactors: AgentRiskSizingV1["limitingFactors"] = [];
+  const add = (factor: AgentRiskSizingV1["limitingFactors"][number]) => {
+    if (!limitingFactors.includes(factor)) limitingFactors.push(factor);
+  };
+  const requestedOrCeiling = Math.min(requested, configuredCeilingCents);
+  if (configuredCeilingCents <= requested) add("CONFIGURED_CEILING");
+  if (equityCapCents <= requestedOrCeiling) add("EQUITY_BUDGET");
+  if (singleNameHeadroomCents <= requestedOrCeiling) add("SINGLE_NAME_HEADROOM");
+  if (aggregateHeadroomCents <= requestedOrCeiling) add("AGGREGATE_HEADROOM");
+  if (collateralStressHeadroomCents <= requestedOrCeiling) add("COLLATERAL_STRESS_HEADROOM");
+  if (spendableBalanceCents <= requestedOrCeiling) add("SPENDABLE_BALANCE");
+  if (dailyHeadroomCents <= requestedOrCeiling) add("DAILY_HEADROOM");
+  if (confidenceBps < 10_000) add("CONFIDENCE_SCALE");
+  if (liquidityBps < 10_000) add("LIQUIDITY_SCALE");
+  if (eventBps < 10_000) add("EVENT_RISK_SCALE");
+  return {
+    configuredCeilingCents,
+    requestedNotionalCents: requested,
+    equityCapCents,
+    singleNameHeadroomCents,
+    aggregateHeadroomCents,
+    collateralStressHeadroomCents,
+    spendableBalanceCents,
+    dailyHeadroomCents,
+    confidenceMultiplierBps: confidenceBps,
+    liquidityMultiplierBps: liquidityBps,
+    eventMultiplierBps: eventBps,
+    preMultiplierCents,
+    riskSizedNotionalCents,
+    limitingFactors,
+  };
+}
+
 function reason(code: string) {
   const text: Record<string, string> = {
     AGENT_HOLD: "Qwen proposed no trade.", AGENT_WAIT: "Qwen proposed waiting for safer or fresher conditions.",
@@ -52,6 +165,8 @@ function reason(code: string) {
     AGENT_DAILY_NOTIONAL_LIMIT: "The signed automatic daily new-notional limit is reached.", SINGLE_NAME_CONCENTRATION: "Projected single-name exposure exceeds 20% of Demo equity.",
     AGGREGATE_CONCENTRATION: "Projected supported-rToken exposure exceeds 40% of Demo equity.", CORRELATED_STRESS: "A correlated 12% rToken shock breaches the required collateral buffer.",
     DAILY_DRAWDOWN_BREAKER: "Demo equity is down at least 3% from the first valid UTC-day snapshot.",
+    NOT_REDUCE_ONLY: "The requested reduction is larger than the current rToken position.",
+    RISK_SIZE_ZERO: "Portfolio, exposure, liquidity, event, confidence, or daily risk capacity permits no automatic order.",
   };
   return text[code] ?? code;
 }
@@ -65,10 +180,9 @@ export function evaluateAgentGuard(input: AgentGuardInput): AgentAuthorizationV1
   }
 
   const side = action === "BUY" ? "buy" as const : "sell" as const;
-  const settingsCap = Math.min(agentPolicy.maxAutomaticOrderCents, input.settings.automaticOrderLimitCents,
-    input.grant?.automaticOrderLimitCents ?? agentPolicy.maxAutomaticOrderCents);
   const requested = input.assessment.proposedNotionalCents;
-  const guardNotional = Math.max(1, Math.min(requested, settingsCap));
+  const sizing = calculateAgentRiskSizing(input);
+  const guardNotional = Math.max(1, sizing.riskSizedNotionalCents);
   const earningsWindow = Boolean(input.event && ["10-Q", "10-K"].includes(input.event.formType));
   const base = evaluateProductionGuard({ userId: input.userId, input: { symbol: input.assessment.symbol, side,
     notionalCents: guardNotional, maxSlippageBps: 35, dataMode: input.market.dataMode,
@@ -113,34 +227,36 @@ export function evaluateAgentGuard(input: AgentGuardInput): AgentAuthorizationV1
   if (input.eventAlreadyActioned) veto("EVENT_ALREADY_ACTIONED");
   if (input.symbolCooldownActive) veto("SYMBOL_COOLDOWN");
   const dailyCount = Math.min(input.settings.automaticOrdersPerDay, input.grant?.automaticOrdersPerDay ?? agentPolicy.maxAutomaticOrdersPerUtcDay);
-  const dailyGross = Math.min(input.settings.automaticGrossNewNotionalCents,
-    input.grant?.automaticGrossNewNotionalCents ?? agentPolicy.maxAutomaticGrossNewNotionalCents);
   if (input.automaticUsage.count >= dailyCount) veto("AGENT_DAILY_ORDER_LIMIT");
-  if (isIncrease && input.automaticUsage.grossNewNotionalCents + guardNotional > dailyGross) veto("AGENT_DAILY_NOTIONAL_LIMIT");
+  if (isIncrease && sizing.dailyHeadroomCents <= 0) veto("AGENT_DAILY_NOTIONAL_LIMIT");
+  if (sizing.riskSizedNotionalCents <= 0) veto("RISK_SIZE_ZERO");
+  if (!isIncrease) {
+    const currentPositionCents = input.portfolio.positions.find((position) => position.symbol === input.assessment.symbol)?.marketValueCents ?? 0;
+    if (requested > currentPositionCents) veto("NOT_REDUCE_ONLY");
+  }
 
   if (isIncrease) {
     const equity = input.portfolio.accountEquityCents;
-    const current = input.portfolio.positions.find((position) => position.symbol === input.assessment.symbol)?.marketValueCents ?? 0;
     const aggregate = input.portfolio.positions.reduce((sum, position) => sum + position.marketValueCents, 0);
-    if ((current + guardNotional) / equity * 100 > agentPolicy.maximumSingleNameExposurePct) veto("SINGLE_NAME_CONCENTRATION");
-    if ((aggregate + guardNotional) / equity * 100 > agentPolicy.maximumAggregateExposurePct) veto("AGGREGATE_CONCENTRATION");
+    if (sizing.singleNameHeadroomCents <= 0) veto("SINGLE_NAME_CONCENTRATION");
+    if (sizing.aggregateHeadroomCents <= 0) veto("AGGREGATE_CONCENTRATION");
     const correlatedBuffer = input.portfolio.collateralBufferPct - ((aggregate + guardNotional) * 0.12 / equity * 100);
-    if (correlatedBuffer < Math.max(input.userPolicy.minCollateralBufferPct, input.settings.minCollateralBufferPct)) veto("CORRELATED_STRESS");
+    if (sizing.collateralStressHeadroomCents <= 0 || correlatedBuffer < Math.max(input.userPolicy.minCollateralBufferPct, input.settings.minCollateralBufferPct)) veto("CORRELATED_STRESS");
     const drawdown = (input.dailyBaselineEquityCents - equity) / Math.max(1, input.dailyBaselineEquityCents) * 100;
     if (drawdown >= agentPolicy.maximumDailyDrawdownPct) veto("DAILY_DRAWDOWN_BREAKER");
   }
 
   if (blockCodes.length) return { permission: "BLOCK", requestedNotionalCents: requested, allowedNotionalCents: 0, side,
-    reasonCodes: blockCodes, reasons: blockReasons, guardDecision: base };
+    reasonCodes: blockCodes, reasons: blockReasons, guardDecision: base, sizing };
   if (base.permission === "ALERT_ONLY") return { permission: "ALERT_ONLY", requestedNotionalCents: requested,
-    allowedNotionalCents: 0, side, reasonCodes: alertCodes, reasons: alertReasons, guardDecision: base };
+    allowedNotionalCents: 0, side, reasonCodes: alertCodes, reasons: alertReasons, guardDecision: base, sizing };
   if (input.settings.mode === "ALERT_ONLY") return { permission: "ALERT_ONLY", requestedNotionalCents: requested,
     allowedNotionalCents: 0, side, reasonCodes: ["ALERT_POLICY_PASS"],
-    reasons: ["The proposal passed deterministic policy, but alert-only mode cannot execute."], guardDecision: base };
-  const allowed = Math.min(base.allowedNotionalCents, settingsCap, requested);
+    reasons: ["The proposal passed deterministic policy, but alert-only mode cannot execute."], guardDecision: base, sizing };
+  const allowed = Math.min(base.allowedNotionalCents, sizing.riskSizedNotionalCents, requested);
   if (input.settings.mode === "SHADOW") return { permission: "TRADE", requestedNotionalCents: requested,
     allowedNotionalCents: allowed, side, reasonCodes: [input.context.trigger.sourceMode === "LOCAL_REPLAY" ? "LOCAL_REPLAY_POLICY_PASS" : "SHADOW_POLICY_PASS"],
-    reasons: [input.context.trigger.sourceMode === "LOCAL_REPLAY" ? "The local replay passed deterministic policy; its shadow-only structure cannot issue a capability." : "The proposal passed deterministic policy in shadow mode; no capability or order was created."], guardDecision: base };
+    reasons: [input.context.trigger.sourceMode === "LOCAL_REPLAY" ? "The local replay passed deterministic policy; its shadow-only structure cannot issue a capability." : "The proposal passed deterministic policy in shadow mode; no capability or order was created."], guardDecision: base, sizing };
   return { permission: "TRADE", requestedNotionalCents: requested, allowedNotionalCents: allowed, side,
-    reasonCodes: ["AGENT_POLICY_PASS"], reasons: ["Qwen evidence, session, grant, portfolio, limits, and all deterministic safety gates passed."], guardDecision: base };
+    reasonCodes: ["AGENT_POLICY_PASS"], reasons: ["Qwen evidence, session, grant, portfolio, risk sizing, and all deterministic safety gates passed."], guardDecision: base, sizing };
 }

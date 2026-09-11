@@ -59,6 +59,13 @@ describe("constrained production Qwen analyst", () => {
     await expect(analyst.assess(testContext())).resolves.toMatchObject({ assessment: { risks: assessment.risks } });
   });
 
+  it("safely normalizes an unambiguous Qwen confidence percentage", async () => {
+    const assessment = testAssessment();
+    const fetcher = vi.fn(async () => modelResponse({ ...assessment, confidence: 95 }));
+    const analyst = new ProductionQwenAnalyst({ apiKey: "k", baseUrl: "https://qwen.test", model: "q", promptVersion: "p" }, fetcher as typeof fetch);
+    await expect(analyst.assess(testContext())).resolves.toMatchObject({ assessment: { confidence: 0.95 } });
+  });
+
   it("retries exactly once for 429/5xx or transport failure", async () => {
     const assessment = testAssessment();
     for (const first of [() => modelResponse({ error: "busy" }, 429), () => modelResponse({ error: "down" }, 503), () => Promise.reject(new Error("socket"))]) {

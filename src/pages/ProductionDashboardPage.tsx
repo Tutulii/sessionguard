@@ -263,7 +263,7 @@ export function ProductionDashboardPage() {
     setReplayFrame(prefersReducedMotion ? Math.max(0, snapshot.chart.length - 1) : 0);
     setReplayPlaying(false);
     setDecision(null);
-  }, [mode, prefersReducedMotion, replayId, snapshot?.dataMode, snapshot?.providerTimestamp]);
+  }, [mode, prefersReducedMotion, replayId, snapshot?.dataMode]);
 
   useEffect(() => {
     if (mode !== "REPLAY" || !snapshot || !replayPlaying || replayFrame >= replayLastFrame) return;

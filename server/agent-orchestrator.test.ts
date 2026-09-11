@@ -1,6 +1,6 @@
 import { Wallet } from "ethers";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { OfficialEventV1 } from "../shared/agent-types.js";
+import { AgentOutcomeV1Schema, type AgentOutcomeV1, type AgentRunV1, type OfficialEventV1 } from "../shared/agent-types.js";
 import type { PortfolioSnapshot } from "../shared/production-types.js";
 import { AgentGrantService } from "./agent-grant.js";
 import { AgentOrchestrator } from "./agent-orchestrator.js";
@@ -19,7 +19,8 @@ import { ProductionTradingService } from "./production-trading.js";
 const closeables: Array<{ close(): Promise<void> }> = [];
 afterEach(async () => { while (closeables.length) await closeables.pop()!.close(); });
 
-async function runtime(now: Date, qwen: ProductionQwenAnalyst | null = null, replayOutcomeDelayMs = 0) {
+async function runtime(now: Date, qwen: ProductionQwenAnalyst | null = null, replayOutcomeDelayMs = 0,
+  marketOverride?: ProductionMarketService) {
   let clock = now;
   const agent = new SqliteAgentRepository(); const platform = new SqlitePlatformRepository(); const coordinator = new MemoryCoordinator();
   closeables.push(agent, platform, coordinator); await agent.init(); await platform.init(); await coordinator.init();
@@ -32,7 +33,7 @@ async function runtime(now: Date, qwen: ProductionQwenAnalyst | null = null, rep
       source: "BITGET_DEMO", capturedAt: now.toISOString() })),
     placeOrder: vi.fn(async () => ({ orderId: "demo-order", raw: {} })), reconcile: vi.fn(async () => null),
   };
-  const market = new ProductionMarketService(platform, coordinator);
+  const market = marketOverride ?? new ProductionMarketService(platform, coordinator);
   const notifications = new NotificationService(platform, coordinator, envelope, "https://sessionguard.test");
   const vault = new PersistentCredentialVault(platform, envelope);
   const tokens = new ProductionDecisionTokenService("orchestrator-decision-key-longer-than-thirty-two-characters", coordinator);
@@ -63,13 +64,13 @@ describe("durable agent orchestrator", () => {
     expect(env.adapter.placeOrder).not.toHaveBeenCalled(); expect(env.adapter.reconcile).not.toHaveBeenCalled();
   });
 
-  it("runs cash-open NVIDIA through a deterministic $100 cap without ever entering the Demo adapter", async () => {
+  it("runs cash-open NVIDIA through deterministic risk sizing without entering the Demo adapter", async () => {
     const env = await runtime(new Date("2026-09-15T15:06:00.000Z"));
     const queued = await env.orchestrator.replay(env.user.id, "cash-nvidia", "RECORDED");
     await env.orchestrator.drain();
     const detail = await env.agent.getRunDetail(env.user.id, queued.id);
     expect(detail).toMatchObject({ state: "COMPLETED", assessment: { action: "BUY", proposedNotionalCents: 15_000 },
-      authorization: { permission: "TRADE", allowedNotionalCents: 10_000 },
+      authorization: { permission: "TRADE", allowedNotionalCents: 6_106, sizing: { configuredCeilingCents: 10_000, equityCapCents: 10_000, riskSizedNotionalCents: 6_106 } },
       outcome: { status: "MISSED_UPSIDE", label: "Recorded replay fixture counterfactual: missed upside" } });
     expect(detail?.transitions.map((item) => item.toState)).toContain("SHADOW_COMPLETE");
     expect(detail?.receipt).toBeNull(); expect(detail?.qualifyingShadowRun).toBe(false);
@@ -90,6 +91,36 @@ describe("durable agent orchestrator", () => {
     expect(await env.agent.getRunDetail(env.user.id, queued.id)).toMatchObject({
       state: "COMPLETED", outcome: { status: "AVOIDED_LOSS" },
     });
+  });
+
+  it("recovers late observations from completed Bitget candles and records provenance", async () => {
+    const completedObservationCandle = vi.fn(async (_symbol: string, target: Date) => ({
+      priceMicros: target.getUTCHours() === 15 ? 101_000_000 : 102_000_000,
+      observedAt: target.toISOString(), completedAt: new Date(target.getTime() + 60_000).toISOString(),
+      source: "BITGET_COMPLETED_1M_CANDLE" as const,
+    }));
+    const snapshot = vi.fn();
+    const market = { snapshot, completedObservationCandle } as unknown as ProductionMarketService;
+    const env = await runtime(new Date("2026-09-15T17:00:00.000Z"), null, 0, market);
+    const run = await env.orchestrator.replay(env.user.id, "cash-nvidia", "RECORDED");
+    const outcome = AgentOutcomeV1Schema.parse({ version: 1, id: "99999999-9999-4999-8999-999999999991",
+      runId: run.id, userId: env.user.id, symbol: run.symbol, status: "PENDING", decisionPriceMicros: 100_000_000,
+      proposedNotionalCents: 15_000, allowedNotionalCents: 0, nextOpenPriceMicros: null, plus60mPriceMicros: null,
+      cashClosePriceMicros: null, observationSources: { nextOpen: null, plus60m: null, cashClose: null }, pnlCents: null,
+      mfeBps: null, maeBps: null, collateralBufferChangePct: null, eventSuperseded: false,
+      observationDueAt: "2026-09-15T15:00:00.000Z", scoredAt: null, label: "Waiting for observations." });
+    await env.agent.saveOutcome(outcome);
+    const internal = env.orchestrator as unknown as {
+      freshOutcomeQuote(run: AgentRunV1, kind: "OUTCOME_NEXT_OPEN" | "OUTCOME_60M", now: Date): Promise<Partial<AgentOutcomeV1>>;
+      recoverMissingOutcomeObservations(run: AgentRunV1, outcome: AgentOutcomeV1, now: Date): Promise<AgentOutcomeV1>;
+    };
+    await expect(internal.freshOutcomeQuote(run, "OUTCOME_NEXT_OPEN", new Date("2026-09-15T15:20:00.000Z")))
+      .resolves.toMatchObject({ nextOpenPriceMicros: 101_000_000,
+        observationSources: { nextOpen: "BITGET_COMPLETED_1M_CANDLE" } });
+    expect(snapshot).not.toHaveBeenCalled();
+    const repaired = await internal.recoverMissingOutcomeObservations(run, outcome, new Date("2026-09-15T17:00:00.000Z"));
+    expect(repaired).toMatchObject({ nextOpenPriceMicros: 101_000_000, plus60mPriceMicros: 102_000_000,
+      observationSources: { nextOpen: "BITGET_COMPLETED_1M_CANDLE", plus60m: "BITGET_COMPLETED_1M_CANDLE" } });
   });
 
   it("deduplicates an exact local replay and reports the skipped duplicate", async () => {

@@ -105,15 +105,15 @@ async function setup() {
 }
 
 describe("PAPER_AUTO execution integration", () => {
-  it("caps a $150 Qwen proposal at $100 and ten concurrent consumers submit exactly one Demo order", async () => {
+  it("risk-sizes a $150 Qwen proposal and ten concurrent consumers submit exactly one Demo order", async () => {
     const env = await setup(); const prepared = await env.prepare();
-    expect(prepared.authorization).toMatchObject({ permission: "TRADE", requestedNotionalCents: 15_000, allowedNotionalCents: 10_000 });
+    expect(prepared.authorization).toMatchObject({ permission: "TRADE", requestedNotionalCents: 15_000, allowedNotionalCents: 6_111 });
     const results = await Promise.allSettled(Array.from({ length: 10 }, () => env.trading.executeAgentDecision({
       userId: env.user.id, runId: prepared.runId, decisionToken: prepared.capability!.token, now: env.now })));
     expect(results.filter((item) => item.status === "fulfilled")).toHaveLength(1);
     expect(env.adapter.placeOrder).toHaveBeenCalledTimes(1);
-    expect(env.adapter.placeOrder).toHaveBeenCalledWith(expect.objectContaining({ symbol: "RNVDAUSDT", side: "buy", notionalCents: 10_000 }));
-    expect(await env.agent.getAutomaticUsage(env.user.id, "2026-09-15T00:00:00.000Z")).toEqual({ count: 1, grossNewNotionalCents: 10_000 });
+    expect(env.adapter.placeOrder).toHaveBeenCalledWith(expect.objectContaining({ symbol: "RNVDAUSDT", side: "buy", notionalCents: 6_111 }));
+    expect(await env.agent.getAutomaticUsage(env.user.id, "2026-09-15T00:00:00.000Z")).toEqual({ count: 1, grossNewNotionalCents: 6_111 });
   });
 
   it("blocks when cash closes or the official event changes between authorization and submission", async () => {

@@ -13,6 +13,7 @@ import {
   type AgentAssessmentV1,
   type AgentJobV1,
   type AgentMode,
+  type AgentOutcomeV1,
   type AgentRunState,
   type AgentRunV1,
   type AgentSettingsV1,
@@ -44,6 +45,9 @@ function errorCode(error: unknown) {
   return known ?? (message.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 128) || "AGENT_RUNTIME_FAILED");
 }
 function pendingReceipt(status: string | undefined) { return ["RESERVED", "SUBMITTING", "RECONCILING"].includes(status ?? ""); }
+function observationSources(outcome: AgentOutcomeV1): NonNullable<AgentOutcomeV1["observationSources"]> {
+  return outcome.observationSources ?? { nextOpen: null, plus60m: null, cashClose: null };
+}
 
 export type AgentOrchestratorOptions = {
   runtimeEnabled: boolean;
@@ -488,7 +492,8 @@ export class AgentOrchestrator {
     const outcome = AgentOutcomeV1Schema.parse({ version: 1, id: randomUUID(), runId: run.id, userId: run.userId,
       symbol: run.symbol, status: "PENDING", decisionPriceMicros: run.context.market.rTokenPriceMicros,
       proposedNotionalCents: run.assessment.proposedNotionalCents, allowedNotionalCents: run.authorization.allowedNotionalCents,
-      nextOpenPriceMicros: null, plus60mPriceMicros: null, cashClosePriceMicros: null, pnlCents: null,
+      nextOpenPriceMicros: null, plus60mPriceMicros: null, cashClosePriceMicros: null,
+      observationSources: { nextOpen: null, plus60m: null, cashClose: null }, pnlCents: null,
       mfeBps: null, maeBps: null, collateralBufferChangePct: null, eventSuperseded: false,
       observationDueAt: start.toISOString(), scoredAt: null, label: replayOutcomeDelayMs > 0
         ? "Local replay scheduler test waiting for its disclosed delay." : "Waiting for Bitget-only observation windows." });
@@ -520,7 +525,9 @@ export class AgentOrchestrator {
     const excursions = prices.map((price) => (price / outcome.decisionPriceMicros - 1) * 10_000 * side);
     const status = pnl < 0 ? "AVOIDED_LOSS" : pnl > 0 ? "MISSED_UPSIDE" : "NEUTRAL";
     const scored = AgentOutcomeV1Schema.parse({ ...outcome, status, nextOpenPriceMicros: nextOpen,
-      plus60mPriceMicros: plus60m, cashClosePriceMicros: last, pnlCents: pnl,
+      plus60mPriceMicros: plus60m, cashClosePriceMicros: last, observationSources: {
+        nextOpen: "RECORDED_REPLAY", plus60m: "RECORDED_REPLAY", cashClose: "RECORDED_REPLAY",
+      }, pnlCents: pnl,
       mfeBps: Math.max(...excursions), maeBps: Math.min(...excursions), scoredAt: this.now().toISOString(),
       label: status === "AVOIDED_LOSS" ? "Recorded replay fixture counterfactual: avoided loss" : status === "MISSED_UPSIDE" ? "Recorded replay fixture counterfactual: missed upside" : "Recorded replay fixture counterfactual: neutral" });
     await this.options.repository.saveOutcome(scored); this.options.telemetry?.agentOutcomes.inc({ status: scored.status }); await this.transition(run, "COMPLETED", "REPLAY_OUTCOME_SCORED");
@@ -534,17 +541,29 @@ export class AgentOrchestrator {
       if (job.kind !== "OUTCOME_CLOSE") throw new Error("REPLAY_OUTCOME_JOB_KIND_INVALID");
       await this.scoreReplayOutcome(run, outcome); return;
     }
-    let patch: { nextOpenPriceMicros: number } | { plus60mPriceMicros: number } | { cashClosePriceMicros: number };
+    let patch: Partial<Pick<AgentOutcomeV1, "nextOpenPriceMicros" | "plus60mPriceMicros" | "cashClosePriceMicros" | "observationSources">>;
     if (job.kind === "OUTCOME_CLOSE") {
-      patch = { cashClosePriceMicros: (await this.options.market.completedCashSessionClose(run.symbol,
-        cashCloseForDate(new Date(outcome.observationDueAt)), now)).priceMicros };
+      const close = await this.options.market.completedCashSessionClose(run.symbol,
+        cashCloseForDate(new Date(outcome.observationDueAt)), now);
+      patch = { cashClosePriceMicros: close.priceMicros, observationSources: {
+        ...observationSources(outcome), cashClose: "BITGET_COMPLETED_1M_CANDLE",
+      } };
     } else if (job.kind === "OUTCOME_NEXT_OPEN" || job.kind === "OUTCOME_60M") {
       patch = await this.freshOutcomeQuote(run, job.kind, now);
     } else throw new Error("OUTCOME_JOB_KIND_INVALID");
     let updated = AgentOutcomeV1Schema.parse({ ...outcome, ...patch });
     if (job.kind === "OUTCOME_CLOSE") {
+      updated = await this.recoverMissingOutcomeObservations(run, updated, now);
       const samples = [updated.nextOpenPriceMicros, updated.plus60mPriceMicros, updated.cashClosePriceMicros].filter((value): value is number => value !== null);
-      if (samples.length < 3) updated = AgentOutcomeV1Schema.parse({ ...updated, status: "INSUFFICIENT_DATA", scoredAt: now.toISOString(), label: "Insufficient fresh Bitget observations; no interpolation was used." });
+      if (samples.length < 3) {
+        const missing = [
+          updated.nextOpenPriceMicros === null ? "next-open" : null,
+          updated.plus60mPriceMicros === null ? "+60-minute" : null,
+          updated.cashClosePriceMicros === null ? "cash-close" : null,
+        ].filter((value): value is string => value !== null);
+        updated = AgentOutcomeV1Schema.parse({ ...updated, status: "INSUFFICIENT_DATA", scoredAt: now.toISOString(),
+          label: `Missing ${missing.join(" and ")} Bitget ${missing.length === 1 ? "observation" : "observations"}; no interpolation was used.` });
+      }
       else {
         const side = run.assessment?.action === "REDUCE" ? -1 : 1; const basis = run.receipt ? run.authorization?.allowedNotionalCents ?? 0 : run.assessment?.proposedNotionalCents ?? 0;
         const pnl = Math.round(((updated.cashClosePriceMicros! / updated.decisionPriceMicros) - 1) * basis * side);
@@ -566,15 +585,54 @@ export class AgentOrchestrator {
     await this.options.coordinator.publish(`agent:${run.userId}`, { type: "OUTCOME", runId: run.id, outcome: updated });
   }
 
+  private async recoverMissingOutcomeObservations(run: AgentRunV1, outcome: AgentOutcomeV1, now: Date) {
+    let updated = outcome;
+    const due = new Date(outcome.observationDueAt).getTime();
+    if (updated.nextOpenPriceMicros === null) {
+      try {
+        const recovered = await this.options.market.completedObservationCandle(run.symbol, new Date(due), now);
+        updated = AgentOutcomeV1Schema.parse({ ...updated, nextOpenPriceMicros: recovered.priceMicros,
+          observationSources: { ...observationSources(updated), nextOpen: recovered.source } });
+      } catch (error) {
+        this.options.telemetry?.capture(error, { job: "outcome-candle-recovery", symbol: run.symbol, point: "next-open" });
+      }
+    }
+    if (updated.plus60mPriceMicros === null) {
+      try {
+        const recovered = await this.options.market.completedObservationCandle(run.symbol, new Date(due + 60 * 60_000), now);
+        updated = AgentOutcomeV1Schema.parse({ ...updated, plus60mPriceMicros: recovered.priceMicros,
+          observationSources: { ...observationSources(updated), plus60m: recovered.source } });
+      } catch (error) {
+        this.options.telemetry?.capture(error, { job: "outcome-candle-recovery", symbol: run.symbol, point: "+60-minute" });
+      }
+    }
+    return updated;
+  }
+
   private async freshOutcomeQuote(run: AgentRunV1, kind: "OUTCOME_NEXT_OPEN" | "OUTCOME_60M", now: Date) {
     const outcome = await this.options.repository.getOutcome(run.id, run.userId);
-    const due = new Date(outcome?.observationDueAt ?? now).getTime();
+    if (!outcome) throw new Error("OUTCOME_MISSING");
+    const due = new Date(outcome.observationDueAt).getTime();
     const expected = kind === "OUTCOME_NEXT_OPEN" ? due : due + 60 * 60_000;
-    if (now.getTime() < expected || now.getTime() - expected > 10 * 60_000) throw new Error("OUTCOME_OBSERVATION_WINDOW_MISSED");
-    const snapshot = await this.options.market.snapshot(run.symbol, { mode: "LIVE_BITGET", now });
-    if (snapshot.quoteAgeMs > 10_000 || snapshot.session !== "CASH_OPEN") throw new Error("OUTCOME_QUOTE_UNAVAILABLE");
-    return kind === "OUTCOME_NEXT_OPEN" ? { nextOpenPriceMicros: snapshot.rTokenPriceMicros }
-      : { plus60mPriceMicros: snapshot.rTokenPriceMicros };
+    if (now.getTime() < expected) throw new Error("OUTCOME_OBSERVATION_WINDOW_NOT_OPEN");
+    if (now.getTime() - expected <= 10 * 60_000) {
+      try {
+        const snapshot = await this.options.market.snapshot(run.symbol, { mode: "LIVE_BITGET", now, fresh: true });
+        if (snapshot.quoteAgeMs <= 10_000 && snapshot.session === "CASH_OPEN") {
+          const sources = observationSources(outcome);
+          return kind === "OUTCOME_NEXT_OPEN"
+            ? { nextOpenPriceMicros: snapshot.rTokenPriceMicros, observationSources: { ...sources, nextOpen: "LIVE_BITGET_QUOTE" as const } }
+            : { plus60mPriceMicros: snapshot.rTokenPriceMicros, observationSources: { ...sources, plus60m: "LIVE_BITGET_QUOTE" as const } };
+        }
+      } catch (error) {
+        this.options.telemetry?.capture(error, { job: "outcome-live-observation", symbol: run.symbol, point: kind });
+      }
+    }
+    const recovered = await this.options.market.completedObservationCandle(run.symbol, new Date(expected), now);
+    const sources = observationSources(outcome);
+    return kind === "OUTCOME_NEXT_OPEN"
+      ? { nextOpenPriceMicros: recovered.priceMicros, observationSources: { ...sources, nextOpen: recovered.source } }
+      : { plus60mPriceMicros: recovered.priceMicros, observationSources: { ...sources, plus60m: recovered.source } };
   }
 
   private async transition(run: AgentRunV1, to: AgentRunState, reasonCode: string, patch: Parameters<AgentRepository["transitionRun"]>[4] = {}) {
@@ -631,7 +689,7 @@ export class AgentOrchestrator {
           id: randomUUID(), runId: run.id, userId: run.userId, symbol: run.symbol, status: "INSUFFICIENT_DATA",
           decisionPriceMicros: run.context.market.rTokenPriceMicros, proposedNotionalCents: run.assessment.proposedNotionalCents,
           allowedNotionalCents: run.authorization.allowedNotionalCents, nextOpenPriceMicros: null, plus60mPriceMicros: null,
-          cashClosePriceMicros: null, pnlCents: null, mfeBps: null, maeBps: null, collateralBufferChangePct: null,
+          cashClosePriceMicros: null, observationSources: { nextOpen: null, plus60m: null, cashClose: null }, pnlCents: null, mfeBps: null, maeBps: null, collateralBufferChangePct: null,
           eventSuperseded: false, observationDueAt: now.toISOString(), scoredAt: now.toISOString(),
           label: "Insufficient data after outcome monitoring failure." }) : null;
         if (fallback) await this.options.repository.saveOutcome(fallback);

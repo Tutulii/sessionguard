@@ -9,14 +9,16 @@ import {
 import { SupportedSymbolSchema, supportedSymbols } from "./types.js";
 
 export const agentPolicy = Object.freeze({
-  version: "2026-09-09.agent.1",
+  version: "2026-09-11.agent.2",
   promptVersion: "sessionguard-agent-v1",
   grantLifetimeMs: 7 * 86_400_000,
   grantChallengeTtlMs: 10 * 60_000,
   decisionTtlMs: 90_000,
   jobLeaseMs: 60_000,
   jobHeartbeatMs: 15_000,
-  maxAutomaticOrderCents: 10_000,
+  maxAutomaticOrderCents: 25_000,
+  defaultAutomaticOrderCents: 10_000,
+  maxAutomaticOrderEquityPct: 2,
   maxAutomaticOrdersPerUtcDay: 5,
   maxAutomaticGrossNewNotionalCents: 50_000,
   minimumShadowAgeMs: 24 * 60 * 60_000,
@@ -142,7 +144,7 @@ export function defaultAgentSettings(userId: string, now = new Date()): AgentSet
     symbols: [...supportedSymbols],
     offHoursMoveThresholdBps: 100,
     minCollateralBufferPct: 15,
-    automaticOrderLimitCents: agentPolicy.maxAutomaticOrderCents,
+    automaticOrderLimitCents: agentPolicy.defaultAutomaticOrderCents,
     automaticOrdersPerDay: agentPolicy.maxAutomaticOrdersPerUtcDay,
     automaticGrossNewNotionalCents: agentPolicy.maxAutomaticGrossNewNotionalCents,
     notificationsEnabled: true,
@@ -271,6 +273,28 @@ export const AgentContextV1Schema = z.object({
 }).strict();
 export type AgentContextV1 = z.infer<typeof AgentContextV1Schema>;
 
+export const AgentRiskSizingV1Schema = z.object({
+  configuredCeilingCents: z.number().int().nonnegative(),
+  requestedNotionalCents: z.number().int().nonnegative(),
+  equityCapCents: z.number().int().nonnegative(),
+  singleNameHeadroomCents: z.number().int().nonnegative(),
+  aggregateHeadroomCents: z.number().int().nonnegative(),
+  collateralStressHeadroomCents: z.number().int().nonnegative(),
+  spendableBalanceCents: z.number().int().nonnegative(),
+  dailyHeadroomCents: z.number().int().nonnegative(),
+  confidenceMultiplierBps: z.number().int().min(0).max(10_000),
+  liquidityMultiplierBps: z.number().int().min(0).max(10_000),
+  eventMultiplierBps: z.number().int().min(0).max(10_000),
+  preMultiplierCents: z.number().int().nonnegative(),
+  riskSizedNotionalCents: z.number().int().nonnegative(),
+  limitingFactors: z.array(z.enum([
+    "CONFIGURED_CEILING", "EQUITY_BUDGET", "SINGLE_NAME_HEADROOM", "AGGREGATE_HEADROOM",
+    "COLLATERAL_STRESS_HEADROOM", "SPENDABLE_BALANCE", "DAILY_HEADROOM", "CONFIDENCE_SCALE",
+    "LIQUIDITY_SCALE", "EVENT_RISK_SCALE",
+  ])),
+}).strict();
+export type AgentRiskSizingV1 = z.infer<typeof AgentRiskSizingV1Schema>;
+
 export const AgentAuthorizationV1Schema = z.object({
   permission: z.enum(["TRADE", "ALERT_ONLY", "BLOCK"]),
   requestedNotionalCents: z.number().int().nonnegative(),
@@ -279,6 +303,7 @@ export const AgentAuthorizationV1Schema = z.object({
   reasonCodes: z.array(z.string()).min(1),
   reasons: z.array(z.string()).min(1),
   guardDecision: GuardDecisionSchema.nullable(),
+  sizing: AgentRiskSizingV1Schema.optional(),
 }).strict();
 export type AgentAuthorizationV1 = z.infer<typeof AgentAuthorizationV1Schema>;
 
@@ -334,6 +359,9 @@ export const AgentRunTransitionV1Schema = z.object({
 }).strict();
 export type AgentRunTransitionV1 = z.infer<typeof AgentRunTransitionV1Schema>;
 
+export const AgentObservationSourceSchema = z.enum(["LIVE_BITGET_QUOTE", "BITGET_COMPLETED_1M_CANDLE", "RECORDED_REPLAY"]);
+export type AgentObservationSource = z.infer<typeof AgentObservationSourceSchema>;
+
 export const AgentOutcomeV1Schema = z.object({
   version: z.literal(1),
   id: z.string().uuid(),
@@ -347,6 +375,11 @@ export const AgentOutcomeV1Schema = z.object({
   nextOpenPriceMicros: z.number().int().positive().nullable(),
   plus60mPriceMicros: z.number().int().positive().nullable(),
   cashClosePriceMicros: z.number().int().positive().nullable(),
+  observationSources: z.object({
+    nextOpen: AgentObservationSourceSchema.nullable(),
+    plus60m: AgentObservationSourceSchema.nullable(),
+    cashClose: AgentObservationSourceSchema.nullable(),
+  }).strict().optional(),
   pnlCents: z.number().int().nullable(),
   mfeBps: z.number().nullable(),
   maeBps: z.number().nullable(),

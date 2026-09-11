@@ -132,7 +132,21 @@ type AgentAssessmentV1 = {
 The existing production guard remains the only component capable of returning `TRADE`. Add an agent evidence layer and these limits, all stricter than or equal to the current platform rules:
 
 - Cash-session-only PAPER_AUTO; `session === CASH_OPEN` must be true both at authorization and immediately before submission.
-- Maximum automatic order: $100; maximum five automatic orders and $500 gross new automatic notional per UTC day. Existing $250/order, 20 orders/day, and $1,000 gross limits still apply across manual and agent activity.
+- Maximum automatic order ceiling: $250, with a least-privilege $100 default; maximum five automatic orders and $500 gross new automatic notional per UTC day. The ceiling is never treated as the order size. Existing 20 orders/day and $1,000 gross limits still apply across manual and agent activity.
+
+### Deterministic risk-based sizing amendment — 2026-09-11
+
+For every Qwen BUY or REDUCE proposal, persist a transparent sizing record. Code starts with the smallest of the Qwen request, $250 system ceiling, user policy, saved agent setting, signed grant, and platform context ceiling. A BUY is then capped by:
+
+- 2% of current Bitget Demo account equity;
+- remaining headroom before 20% single-name and 40% aggregate supported-rToken exposure;
+- remaining capacity under the correlated −12% stress test and the stricter configured collateral-buffer minimum;
+- current spendable Demo balance; and
+- remaining signed automatic gross-new-notional capacity for the UTC day.
+
+After capacity limits, deterministic code scales the candidate down—not up—using Qwen confidence, current Bitget spread/liquidity, official-event form risk, and caution flags. Confidence scales from 50% at the autonomous threshold to 100% at full confidence. Liquidity scales from 100% at a zero spread toward 50% at the applicable spread limit; a spread beyond the limit remains ALERT_ONLY. Event multipliers are 80% for 8-K/6-K, 70% for issuer releases, and 50% for 10-Q/10-K, tightened to at most 60% for late detection, 40% for a correction, and 25% for possible suspension language. Final sizing floors to whole cents.
+
+A zero result is BLOCK. REDUCE remains strictly reduce-only: its original requested amount may not exceed the held position, even if a smaller computed candidate would fit. The sizing inputs, multipliers, limiting factors, capacity amount, and risk-sized amount are stored with the authorization and shown in the run drawer.
 - Minimum Qwen confidence: 0.80 for `BUY`, 0.65 for `REDUCE`. Autonomous buys additionally require `HIGH` relevance and `NEW` or `UPDATE` novelty.
 - An official event used for a buy must be no more than 24 hours old and not superseded.
 - One automatic action per user/event and a 60-minute automatic-order cooldown per user/symbol.
@@ -155,7 +169,7 @@ The signed scope contains:
 - selected subset of the three supported symbols;
 - actions `BUY` and `REDUCE` only;
 - `executionMode: BITGET_DEMO` and literal `cashOpenOnly: true`;
-- user-selected automatic order limit up to $100, at most five automatic orders/day, and at most $500 automatic gross new notional/day;
+- user-selected automatic order ceiling up to $250 (default $100), at most five automatic orders/day, and at most $500 automatic gross new notional/day; changing the ceiling invalidates the old scope and requires a fresh signature;
 - active agent-policy/settings version, issue time, and server-set expiry exactly seven days later.
 
 Grant challenges expire after ten minutes and are single use. Store the verified grant and SIWE message hash in PostgreSQL, not a reusable bearer secret. A background decision capability binds to the grant ID, grant hash, user, policy/settings versions, market/portfolio/context hashes, symbol, side, amount, nonce, and 90-second expiry.
@@ -310,7 +324,7 @@ Extend worker health, Prometheus rules, Grafana, Sentry context, OTEL spans, syn
 - Every legal state transition and rejection of every illegal/repeated transition.
 - Context privacy projection, stable hashing, symbol/time/source consistency, and stale-field rejection.
 - Qwen schema, action constraints, evidence IDs, confidence/relevance/novelty gates, timeout/retry limits, and prompt-injection fixtures.
-- Exposure, concentration, daily drawdown, single/correlated stress, auto order/daily caps, reduce-only behavior, and kill-switch priority.
+- Equity-budget, exposure-headroom, liquidity/spread, event/confidence multipliers, daily drawdown, single/correlated stress, $250 absolute ceiling, partial daily-cap sizing, zero-capacity blocks, reduce-only behavior, and kill-switch priority.
 - Purpose-specific SIWE replay/domain/URI/chain/scope/expiry attacks, grant renewal/revocation/demotion, and manual-vs-agent token substitution.
 - Counterfactual direction, avoided-loss/missed-upside labels, MFE/MAE, and insufficient-data outcomes.
 
@@ -330,7 +344,7 @@ Extend worker health, Prometheus rules, Grafana, Sentry context, OTEL spans, syn
 - Opt in → observe shadow counters → remain locked before 24h/10 runs → become eligible exactly when both pass.
 - Review the seven-day scope → sign purpose-specific SIWE → PAPER_AUTO becomes active → revoke without another signature.
 - Watch a Sunday Oracle run animate Qwen `BUY $250` into deterministic `BLOCK $0`, receipt, and later counterfactual.
-- Watch cash-open NVIDIA propose a buy, cap it to $100, revalidate, submit one Demo order, reconcile it, and display the outcome.
+- Watch cash-open NVIDIA propose a buy, deterministically risk-size it below its signed ceiling, revalidate the same-or-safer amount, submit one Demo order, reconcile it, and display the sizing evidence and outcome.
 - Grant expires or cash closes between decision and execution → zero submission and clear reason.
 - Mobile 390 px, keyboard-only, screen-reader names/status announcements, focus containment, WCAG contrast, reduced motion, reconnecting SSE, and empty/error/degraded states.
 - Prove replay is always `LOCAL_REPLAY`, recorded assessments are labelled, and replays/manual runs do not advance eligibility.

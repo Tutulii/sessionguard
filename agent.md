@@ -33,6 +33,7 @@ Implement every requirement in `PRODUCTION_PLAN.md` and `AI_AGENT_PRODUCTION_PLA
 - [x] Bitget-only live snapshots and persisted cash-session anchors.
 - [x] Portfolio synchronization and freshness enforcement.
 - [x] Versioned deterministic risk policy with tighten-only preferences.
+- [x] Portfolio-aware deterministic agent sizing: 2% equity budget, exposure/stress/spendable/daily headroom, confidence/liquidity/event multipliers, $100 default, and $250 absolute signed ceiling.
 - [x] Atomic decision-token consumption, idempotent Demo orders, and reconciliation.
 - [x] In-app, Telegram, email, and web-push notification channels.
 - [x] Production dashboard workflows, data labels, accessibility, and reduced motion.
@@ -49,9 +50,10 @@ The original hackathon prototype and its audit remain recorded in `IMPLEMENTATIO
 
 - Roadmap-to-code comparison: **11/11 AI-agent plan sections mapped; zero unresolved implementation gaps.**
 - Dedupe acceptance: one decision for unchanged official/replay content, amended content may create one new decision, and collateral alerts re-fire only on a worse band or a recovered-and-rearmed episode.
+- Risk-sizing acceptance: every amended requirement maps to code/UI/tests in `AI_AGENT_PRODUCTION_AUDIT.md`; `npm run check` passes 245 tests plus two explicit external-infrastructure skips, zero dependency vulnerabilities, both security scans, and the production build.
 - Release evidence: GitHub production-gates run `34550082271` passed 239 tests, 20 applicable desktop/mobile Chromium journeys, PostgreSQL migrations, the production container build, and a Trivy scan with zero high or critical findings.
 - Immutable legacy rows are retained in exports and grouped only in the visible agent tape.
 
 ## Status
 
-**COMPLETE — production and AI-agent plans, including the 2026-09-11 semantic-dedupe hardening amendment, passed final comparison and release verification. See `PRODUCTION_AUDIT.md` and `AI_AGENT_PRODUCTION_AUDIT.md`.**
+**COMPLETE — production and AI-agent plans, including the 2026-09-11 semantic-dedupe, Bitget observation-recovery, timing-clarity, and deterministic risk-sizing amendments, passed final plan-to-code comparison and local release verification. See `PRODUCTION_AUDIT.md` and `AI_AGENT_PRODUCTION_AUDIT.md`.**
