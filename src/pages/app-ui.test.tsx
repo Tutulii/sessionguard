@@ -139,6 +139,7 @@ describe("SessionGuard React experience", () => {
     expect(screen.getByText("STATIC REPLAY DATA", { selector: ".market-source-status" })).toBeInTheDocument();
     expect(screen.getByText(/BITGET CASH SESSION ANCHOR/i)).toBeInTheDocument();
     const timeline = screen.getByRole("slider", { name: "Replay timeline" }) as HTMLInputElement;
+    await waitFor(() => expect(timeline.max).toBe(String(replayScenarios[0].snapshot.chart.length - 1)));
     expect(timeline.value).toBe("0");
     expect(screen.getByRole("button", { name: "Reach decision point to run guard" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Jump to decision point" }));
