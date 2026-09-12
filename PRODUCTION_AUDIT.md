@@ -1,18 +1,18 @@
 # SessionGuard Production Plan Audit
 
-Audit date: 2026-09-11
+Audit date: 2026-09-12
 Audited contract: `PRODUCTION_PLAN.md`, `AI_AGENT_PRODUCTION_PLAN.md`, and `agent.md`
 Result: **100% of the planned production-beta platform and its additive AI-agent extension are present, tested, and documented. No implementation gaps remain.**
 
-This verdict covers the deliberately narrow code and delivery scope: Bitget-only rToken data, deterministic permissions, local replay, and Bitget Demo/paper execution for rNVDA, rTSLA, and rORCL. A cost-controlled Fly hackathon deployment was subsequently authorized; it does not claim the HA topology, managed-cloud restore drill, or phased public rollout. The profile and its explicit security/availability tradeoffs are documented in `OPERATIONS.md`.
+This verdict covers the deliberately narrow code and delivery scope: Bitget-only rToken data, deterministic permissions, local replay, and Bitget Demo/paper execution for rNVDA, rTSLA, and rORCL. The authorized cost-controlled Fly hackathon deployment is now live; it does not claim the HA topology, managed-cloud restore drill, or phased public rollout. The profile and its explicit security/availability tradeoffs are documented in `OPERATIONS.md`.
 
 ## Final verification evidence
 
 | Gate | Result |
 |---|---|
 | TypeScript client and server type checking | Passed |
-| Unit, contract, failure, security, load, agent, and PostgreSQL/Redis integration tests | **47 files, 239 tests passed in CI** |
-| Desktop and 390 px mobile Chromium journeys | **20 passed, 4 intentionally skipped cross-project cases** |
+| Unit, contract, failure, security, load, agent, and PostgreSQL/Redis integration tests | **47 files, 249 tests passed in CI** |
+| Desktop and 390 px mobile Chromium journeys | **20 passed** |
 | Automated accessibility scan | No serious or critical Axe violations on landing, dashboard, or agent control room |
 | Reduced-motion and responsive checks | Passed; 390 px dashboard has no horizontal overflow and touch targets are at least 44 px |
 | Secret-pattern scan | Passed |
@@ -24,7 +24,8 @@ This verdict covers the deliberately narrow code and delivery scope: Bitget-only
 | Live provider smoke | Real Bitget public endpoint returned rNVDA ticker, bid/ask, cash-session anchor, freshness, and chart through `ProductionMarketService` |
 | Synthetic API smoke | Health, replay snapshot, Sunday block, cash-open permission, and local simulation passed |
 | Fly configuration | `flyctl config validate --strict` passed |
-| Container build and high/critical scan | Production image built and Trivy reported **0 high / 0 critical** in CI run `34550082271` |
+| Container build and high/critical scan | Production image built and Trivy reported **0 high / 0 critical** in CI run `34659806453` |
+| Authorized Fly hackathon deployment | Release v2 complete; one web and one worker Machine healthy in `sin`; PostgreSQL, agent database, Redis, paper-only boundary, agent runtime, HTTPS, DNS, and public synthetic replay smoke passed |
 
 ## Requirement-to-implementation comparison
 
@@ -42,7 +43,7 @@ This verdict covers the deliberately narrow code and delivery scope: Bitget-only
 
 | Plan requirement | Implementation and evidence | Status |
 |---|---|---|
-| React/Vite/TypeScript + Fastify; Fly web/worker groups, Singapore, two of each | Stack is retained. `fly.toml` defines `web` and `worker` in `sin`, keeps two web machines warm, and `OPERATIONS.md` requires and verifies `fly scale count web=2 worker=2 --region sin` during rollout. | Complete |
+| React/Vite/TypeScript + Fastify; Fly web/worker groups, Singapore, two of each | Stack and both process groups are implemented. The authorized hackathon profile deliberately deploys one web and one worker in `sin`; `OPERATIONS.md` retains two of each as the HA public-beta promotion target. | Implementation complete; hackathon deployment intentionally non-HA |
 | HA PostgreSQL in production; SQLite only for local/test/replay | `server/postgres-repository.ts` is selected whenever `DATABASE_URL` exists; production startup fails without it. SQLite is guarded by `SESSIONGUARD_ALLOW_LOCAL_INFRA`; PostgreSQL 18 integration and migrations passed. | Complete |
 | Redis for sessions, locks, rate limiting, cache, SSE, and notification jobs | `server/redis-coordinator.ts` implements all six responsibilities and persistent leased queues; the real Redis integration test exercises each contract. | Complete |
 | Arbitrum SIWE, one-use 10-minute challenge, strict validation, secure session lifetimes, fresh proof for credentials | `server/siwe-auth.ts` fixes chain 42161 and binds address/domain/URI/message/signature/time; coordinator sessions enforce 12-hour idle/seven-day absolute expiry. Fresh proof guards credential, channel, export, and deletion mutations. Replay/chain/domain/expiry/session attacks are tested. | Complete |
@@ -116,13 +117,13 @@ This verdict covers the deliberately narrow code and delivery scope: Bitget-only
 
 ## Completion verdict
 
-Every `PRODUCTION_PLAN.md` requirement and every additive `AI_AGENT_PRODUCTION_PLAN.md` requirement has a concrete implementation location and test or operational evidence. The semantic-dedupe follow-up guarantees one decision per unchanged event, durable collateral-risk episodes, and console-only grouping of immutable legacy rows. GitHub production-gates run `34550082271` passed all 239 tests, 20 applicable browser journeys, PostgreSQL migrations, the production image build, and a zero-high/zero-critical Trivy scan. No TODO, FIXME, placeholder, contradictory price-source wording, unversioned private route, live-money path, or unresolved implementation item remains.
+Every `PRODUCTION_PLAN.md` requirement and every additive `AI_AGENT_PRODUCTION_PLAN.md` requirement has a concrete implementation location and test or operational evidence. The semantic-dedupe follow-up guarantees one decision per unchanged event, durable collateral-risk episodes, and console-only grouping of immutable legacy rows. GitHub production-gates run `34659806453` passed all 249 tests, 20 browser journeys, PostgreSQL/Redis integration, the production image build, and a zero-high/zero-critical Trivy scan. No TODO, FIXME, placeholder, contradictory price-source wording, unversioned private route, live-money path, or unresolved implementation item remains.
 
-**Implementation status: COMPLETE.** Public rollout remains intentionally gated by production secrets, managed services, external CI/container execution, restore/security exercises, and operator approval described in `OPERATIONS.md`.
+**Implementation status: COMPLETE.** The cost-controlled hackathon demo is deployed and verified. Promotion to the HA public-beta topology remains gated by managed services, restore/security exercises, and the staged rollout in `OPERATIONS.md`.
 
 
 ## AI deterministic risk-sizing amendment — 2026-09-11
 
 The additive AI plan now treats $250 as an absolute signed/system ceiling while retaining a $100 least-privilege default. server/agent-guard.ts calculates equity, exposure, correlated-stress, spendable, daily, confidence, Bitget-liquidity, and event-risk constraints; shared/agent-types.ts persists the complete sizing explanation; and the agent run drawer displays it. The amended roadmap comparison is recorded in AI_AGENT_PRODUCTION_AUDIT.md.
 
-Local verification: npm run check passed 245 tests with two external-infrastructure skips, zero audit vulnerabilities, clean secret and Demo-only execution scans, and a successful production build. The running local service also passed npm run synthetic:smoke.
+Local verification: npm run check passed 247 tests with two external-infrastructure skips, zero audit vulnerabilities, clean secret and Demo-only execution scans, and a successful production build. The running local service also passed npm run synthetic:smoke.

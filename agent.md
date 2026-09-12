@@ -50,10 +50,11 @@ The original hackathon prototype and its audit remain recorded in `IMPLEMENTATIO
 
 - Roadmap-to-code comparison: **11/11 AI-agent plan sections mapped; zero unresolved implementation gaps.**
 - Dedupe acceptance: one decision for unchanged official/replay content, amended content may create one new decision, and collateral alerts re-fire only on a worse band or a recovered-and-rearmed episode.
-- Risk-sizing acceptance: every amended requirement maps to code/UI/tests in `AI_AGENT_PRODUCTION_AUDIT.md`; `npm run check` passes 245 tests plus two explicit external-infrastructure skips, zero dependency vulnerabilities, both security scans, and the production build.
-- Release evidence: GitHub production-gates run `34550082271` passed 239 tests, 20 applicable desktop/mobile Chromium journeys, PostgreSQL migrations, the production container build, and a Trivy scan with zero high or critical findings.
+- Risk-sizing acceptance: every amended requirement maps to code/UI/tests in `AI_AGENT_PRODUCTION_AUDIT.md`; the final local `npm run check` passes 247 tests plus two explicit external-infrastructure skips, zero dependency vulnerabilities, both security scans, and the production build.
+- Release evidence: GitHub production-gates run `34659806453` passed 249 tests, 20 desktop/mobile Chromium journeys, PostgreSQL/Redis integration, the production container build, and a Trivy scan with zero high or critical findings.
+- Deployment evidence: Fly release v2 is complete at `https://sessionguard-demo.fly.dev`; one web and one worker Machine in Singapore pass PostgreSQL, agent-database, Redis, paper-only, and agent-runtime health checks. The public synthetic replay smoke passed in 355 ms.
 - Immutable legacy rows are retained in exports and grouped only in the visible agent tape.
 
 ## Status
 
-**COMPLETE — production and AI-agent plans, including the 2026-09-11 semantic-dedupe, Bitget observation-recovery, timing-clarity, and deterministic risk-sizing amendments, passed final plan-to-code comparison and local release verification. See `PRODUCTION_AUDIT.md` and `AI_AGENT_PRODUCTION_AUDIT.md`.**
+**COMPLETE — production and AI-agent plans, including the 2026-09-11 semantic-dedupe, Bitget observation-recovery, timing-clarity, and deterministic risk-sizing amendments, passed final plan-to-code comparison, CI, and the authorized Fly hackathon deployment verification. See `PRODUCTION_AUDIT.md` and `AI_AGENT_PRODUCTION_AUDIT.md`.**
