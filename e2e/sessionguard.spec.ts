@@ -137,8 +137,10 @@ test.describe("production user journeys", () => {
     await expect(dialog.getByLabel("Demo API key")).toBeFocused();
     await page.keyboard.press("Shift+Tab");
     await expect(dialog.getByRole("button", { name: /close connect bitget demo/i })).toBeFocused();
+    const verify = dialog.getByRole("button", { name: /verify and encrypt/i });
+    await expect(verify).toBeEnabled();
     await page.keyboard.press("Shift+Tab");
-    await expect(dialog.getByRole("button", { name: /verify and encrypt/i })).toBeFocused();
+    await expect(verify).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
     await expect(connect).toBeFocused();
