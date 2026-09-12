@@ -23,7 +23,9 @@ Do not set `SESSIONGUARD_ALLOW_LOCAL_INFRA=1` in Fly. SQLite, the memory coordin
 
 ### Authorized hackathon deployment profile
 
-The public hackathon demo uses `SESSIONGUARD_DEPLOYMENT_PROFILE=HACKATHON`: one 512 MB web Machine, one 512 MB worker Machine, a single-node Fly Postgres development cluster, and Upstash Redis pay-as-you-go with eviction, automatic plan upgrades, and ProdPack disabled. This profile is deliberately economical and is **not** the high-availability public-beta topology above.
+The public hackathon demo uses `SESSIONGUARD_DEPLOYMENT_PROFILE=HACKATHON`: one 512 MB web Machine, one 512 MB worker Machine, a single-node Fly Postgres development cluster with 1 GB RAM and a 10 GB encrypted volume, and Upstash Redis pay-as-you-go with eviction, automatic plan upgrades, and ProdPack disabled. This profile is deliberately economical and is **not** the high-availability public-beta topology above.
+
+The worker health check uses a five-second process heartbeat plus a three-minute stuck-tick threshold. A long official-source or Qwen scan remains healthy while it is making bounded progress, but a stalled tick, PostgreSQL failure, agent-database failure, or Redis failure still makes the check fail closed.
 
 PostgreSQL and Redis remain mandatory and readiness still fails closed if either dependency is unavailable. Bitget execution remains Demo-only. Provider notifications and external Sentry/OTLP delivery are optional in this profile; in-app evidence, metrics endpoints, and structured logs remain available.
 

@@ -90,6 +90,9 @@ export async function createProductionWorker(options: ProductionWorkerOptions = 
   let lastOfficialPoll = 0;
   let lastAgentScan = 0;
   let lastGrantMaintenance = 0;
+  let lastHeartbeatAt: string | null = null;
+  let activeTickStartedAt: string | null = null;
+  let heartbeatTimer: NodeJS.Timeout | null = null;
 
   async function marketTick(now: Date) {
     const release = await coordinator.acquireLock("worker:market-feed", 4_500);
@@ -144,7 +147,6 @@ export async function createProductionWorker(options: ProductionWorkerOptions = 
       lastGrantMaintenance = now.getTime();
       await grantService.maintain(now).catch((error) => telemetry.capture(error, { job: "agent-grant-maintenance" }));
     }
-    for (let index = 0; index < 9; index += 1) if (!await agent.runOne(now)) break;
     const health = { qwen: qwen?.health() ?? { status: "DISABLED" }, source: watcher.health() };
     await coordinator.cacheSet("agent:runtime-health", health, 60);
     telemetry.agentKillSwitch.set({ scope: "runtime" }, runtimeEnabled ? 0 : 1);
@@ -155,46 +157,67 @@ export async function createProductionWorker(options: ProductionWorkerOptions = 
   }
 
   async function tick(now = new Date()) {
-    return telemetry.withSpan("worker.tick", { "sessionguard.worker.time": now.toISOString() }, async () => {
-      await Promise.all([
-      marketTick(now),
-      notificationTick(),
-      agentTick(now),
-      trading.reconcilePendingOrders({ now }).catch((error) => {
-        telemetry.capture(error, { job: "order-reconciliation" });
-        return 0;
-      }),
-    ]);
-    if (now.getTime() - lastPortfolioSync >= 5 * 60_000) {
-      lastPortfolioSync = now.getTime();
-      await trading.refreshConnectedPortfolios().catch((error) => telemetry.capture(error, { job: "portfolio-sync" }));
+    activeTickStartedAt = new Date().toISOString();
+    lastHeartbeatAt = activeTickStartedAt;
+    try {
+      return await telemetry.withSpan("worker.tick", { "sessionguard.worker.time": now.toISOString() }, async () => {
+        const jobs: Promise<unknown>[] = [
+          marketTick(now),
+          notificationTick(),
+          agentTick(now),
+          trading.reconcilePendingOrders({ now }).catch((error) => {
+            telemetry.capture(error, { job: "order-reconciliation" });
+            return 0;
+          }),
+        ];
+        if (now.getTime() - lastPortfolioSync >= 5 * 60_000) {
+          lastPortfolioSync = now.getTime();
+          jobs.push(trading.refreshConnectedPortfolios().catch((error) => telemetry.capture(error, { job: "portfolio-sync" })));
+        }
+        if (now.getTime() - lastRetention >= 24 * 60 * 60_000) {
+          lastRetention = now.getTime();
+          jobs.push(Promise.all([repository.prune(now), agentRepository.prune(now)])
+            .catch((error) => telemetry.capture(error, { job: "retention" })));
+        }
+        await Promise.all(jobs);
+        lastSuccessfulTickAt = new Date().toISOString();
+        telemetry.workerLastSuccess.set(Date.now() / 1_000);
+      });
+    } finally {
+      activeTickStartedAt = null;
+      lastHeartbeatAt = new Date().toISOString();
     }
-    if (now.getTime() - lastRetention >= 24 * 60 * 60_000) {
-      lastRetention = now.getTime();
-      await Promise.all([repository.prune(now), agentRepository.prune(now)]).catch((error) => telemetry.capture(error, { job: "retention" }));
-    }
-    lastSuccessfulTickAt = new Date().toISOString();
-    telemetry.workerLastSuccess.set(Date.now() / 1_000);
-    });
   }
 
   async function run() {
-    while (!stopped) {
-      const started = Date.now();
-      await tick().catch((error) => telemetry.capture(error, { job: "worker-loop" }));
-      await new Promise((resolve) => setTimeout(resolve, Math.max(250, 5_000 - (Date.now() - started))));
+    lastHeartbeatAt = new Date().toISOString();
+    heartbeatTimer = setInterval(() => { lastHeartbeatAt = new Date().toISOString(); }, 5_000);
+    try {
+      while (!stopped) {
+        const started = Date.now();
+        await tick().catch((error) => telemetry.capture(error, { job: "worker-loop" }));
+        await new Promise((resolve) => setTimeout(resolve, Math.max(250, 5_000 - (Date.now() - started))));
+      }
+    } finally {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
     }
   }
 
   async function stop() {
     stopped = true;
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
     await Promise.allSettled([repository.close(), agentRepository.close(), coordinator.close()]);
   }
 
   async function health() {
     const [database, agentDatabase, redis] = await Promise.all([repository.ready(), agentRepository.ready(), coordinator.ready()]);
-    const recent = lastSuccessfulTickAt !== null && Date.now() - new Date(lastSuccessfulTickAt).getTime() < 30_000;
-    return { ok: database && agentDatabase && redis && recent && !stopped, database, agentDatabase, redis, recent, lastSuccessfulTickAt, agentRuntime: runtimeEnabled };
+    const heartbeatRecent = lastHeartbeatAt !== null && Date.now() - new Date(lastHeartbeatAt).getTime() < 15_000;
+    const tickStalled = activeTickStartedAt !== null && Date.now() - new Date(activeTickStartedAt).getTime() >= 180_000;
+    const recent = heartbeatRecent && !tickStalled;
+    return { ok: database && agentDatabase && redis && recent && !stopped, database, agentDatabase, redis, recent,
+      heartbeatRecent, tickStalled, lastHeartbeatAt, activeTickStartedAt, lastSuccessfulTickAt, agentRuntime: runtimeEnabled };
   }
 
   return { run, tick, stop, health, agent, agentRepository, metrics: () => telemetry.metrics(), metricsContentType: () => telemetry.contentType() };

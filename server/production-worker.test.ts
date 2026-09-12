@@ -42,4 +42,34 @@ describe("production worker process", () => {
     expect(fetcher).toHaveBeenCalled();
     await worker.stop();
   });
+
+  it("reports a healthy heartbeat while a bounded initial scan is running", async () => {
+    const providerAt = new Date();
+    let releaseTicker!: () => void;
+    const tickerGate = new Promise<void>((resolve) => { releaseTicker = resolve; });
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/tickers")) {
+        await tickerGate;
+        return response([{
+          symbol: url.searchParams.get("symbol"), ts: String(providerAt.getTime()), lastPrice: "100",
+          bid1Price: "99.99", ask1Price: "100.01",
+        }]);
+      }
+      const end = Number(url.searchParams.get("endTime"));
+      return response([[String(end - 120_000), "99", "101", "98", "100"]]);
+    }) as typeof fetch;
+    const worker = await createProductionWorker({
+      repository: new SqlitePlatformRepository(), coordinator: new MemoryCoordinator(),
+      keyManager: new LocalDataKeyManager("worker-heartbeat-test-key-longer-than-32-characters"),
+      notificationSender: { send: vi.fn(async () => "unused") }, fetcher, allowLocal: true, runtimeEnabled: false,
+    });
+
+    const running = worker.run();
+    await vi.waitFor(async () => expect(await worker.health()).toMatchObject({ ok: true, heartbeatRecent: true, tickStalled: false }));
+    releaseTicker();
+    await vi.waitFor(async () => expect((await worker.health()).lastSuccessfulTickAt).not.toBeNull());
+    await worker.stop();
+    await running;
+  }, 10_000);
 });

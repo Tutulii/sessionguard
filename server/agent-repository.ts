@@ -678,6 +678,10 @@ export class PostgresAgentRepository implements AgentRepository {
   constructor(connectionString: string, options: { max?: number; ssl?: boolean } = {}) {
     this.pool = new Pool({ connectionString, max: options.max ?? 10, idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 8_000, ...(options.ssl ? { ssl: { rejectUnauthorized: true } } : {}) });
+    // Prevent an idle connection terminated during a database restart from
+    // becoming an uncaught EventEmitter error. Individual operations continue
+    // to reject, so agent execution and readiness still fail closed.
+    this.pool.on("error", () => undefined);
   }
   async init() {
     const client = await this.pool.connect();

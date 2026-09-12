@@ -159,6 +159,8 @@ export class BitgetDemoTradingAdapter implements DemoTradingAdapter {
       passphrase: credentials.passphrase,
       paperTrading: true,
       modules: "account,trade,market",
+      timeoutMs: 8_000,
+      retry: { maxRetries: 1, baseDelayMs: 250, maxDelayMs: 1_000 },
       ...(this.baseUrl ? { baseUrl: this.baseUrl } : {}),
     });
     return new BitgetRestClient(config);

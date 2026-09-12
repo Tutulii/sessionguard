@@ -45,6 +45,11 @@ export class PostgresPlatformRepository implements PlatformRepository {
       connectionTimeoutMillis: 8_000,
       ...(options.ssl ? { ssl: { rejectUnauthorized: true } } : {}),
     });
+    // pg emits idle-client failures on the Pool itself. Without an error
+    // listener, a transient database restart becomes an uncaught EventEmitter
+    // error and terminates the whole web/worker process. Queries still reject
+    // normally and readiness remains fail-closed while PostgreSQL is down.
+    this.pool.on("error", () => undefined);
   }
 
   async init() {
