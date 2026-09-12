@@ -1,4 +1,4 @@
-export const agentSchemaVersion = "0003-trigger-dedupe-state";
+export const agentSchemaVersion = "0004-canonical-job-timestamps";
 
 export const agentSchemaSql = `
 CREATE TABLE IF NOT EXISTS official_events (
@@ -128,6 +128,19 @@ CREATE TABLE IF NOT EXISTS agent_jobs (
   UNIQUE(run_id,kind,run_at)
 );
 CREATE INDEX IF NOT EXISTS agent_jobs_claim_idx ON agent_jobs(status,run_at,lease_expires_at);
+-- Timestamp parameters shared with timestamptz columns are rendered by
+-- PostgreSQL with a space and offset when cast back to text. Canonicalize the
+-- durable JSON projection so strict ISO schema parsing survives leases,
+-- retries, completion, and upgrades from earlier releases.
+UPDATE agent_jobs SET job_json=job_json || jsonb_build_object(
+  'status',status,
+  'runAt',to_char(run_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+  'attemptCount',attempt_count,'workerId',worker_id,
+  'leaseExpiresAt',CASE WHEN lease_expires_at IS NULL THEN NULL ELSE to_char(lease_expires_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END,
+  'lastErrorCode',last_error_code,
+  'createdAt',to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+  'updatedAt',to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+);
 
 
 CREATE TABLE IF NOT EXISTS agent_daily_equity_baselines (

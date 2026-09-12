@@ -890,8 +890,8 @@ export class PostgresAgentRepository implements AgentRepository {
     try {
       await client.query("BEGIN");
       await client.query(`UPDATE agent_jobs SET status='QUEUED',worker_id=NULL,lease_expires_at=NULL,updated_at=$1,
-        job_json=job_json || jsonb_build_object('status','QUEUED','workerId',NULL,'leaseExpiresAt',NULL,'updatedAt',$1::text)
-        WHERE status='LEASED' AND lease_expires_at<=$1`, [now.toISOString()]);
+        job_json=job_json || jsonb_build_object('status','QUEUED','workerId',NULL,'leaseExpiresAt',NULL,'updatedAt',$2::text)
+        WHERE status='LEASED' AND lease_expires_at<=$1`, [now.toISOString(), now.toISOString()]);
       const row = (await client.query(`SELECT * FROM agent_jobs WHERE status='QUEUED' AND run_at<=$1
         ORDER BY run_at,id FOR UPDATE SKIP LOCKED LIMIT 1`, [now.toISOString()])).rows[0];
       if (!row) { await client.query("COMMIT"); return null; }
@@ -906,16 +906,17 @@ export class PostgresAgentRepository implements AgentRepository {
   async heartbeatJob(jobId: string, workerId: string, now: Date, leaseMs: number) {
     const expiresAt = new Date(now.getTime() + leaseMs).toISOString();
     const result = await this.pool.query(`UPDATE agent_jobs SET lease_expires_at=$1,updated_at=$2,
-      job_json=job_json || jsonb_build_object('leaseExpiresAt',$1::text,'updatedAt',$2::text)
-      WHERE id=$3 AND worker_id=$4 AND status='LEASED'`, [expiresAt, now.toISOString(), jobId, workerId]);
+      job_json=job_json || jsonb_build_object('leaseExpiresAt',$5::text,'updatedAt',$6::text)
+      WHERE id=$3 AND worker_id=$4 AND status='LEASED'`,
+      [expiresAt, now.toISOString(), jobId, workerId, expiresAt, now.toISOString()]);
     return result.rowCount === 1;
   }
   async completeJob(jobId: string, workerId: string, now: Date) { await this.pgFinishJob(jobId, workerId, "COMPLETED", null, now); }
   async retryJob(jobId: string, workerId: string, runAt: Date, errorCode: string, now: Date) {
     const result = await this.pool.query(`UPDATE agent_jobs SET status='QUEUED',run_at=$1,worker_id=NULL,lease_expires_at=NULL,
-      last_error_code=$2,updated_at=$3,job_json=job_json || jsonb_build_object('status','QUEUED','runAt',$1::text,
-      'workerId',NULL,'leaseExpiresAt',NULL,'lastErrorCode',$2,'updatedAt',$3::text) WHERE id=$4 AND worker_id=$5 AND status='LEASED'`,
-      [runAt.toISOString(), errorCode, now.toISOString(), jobId, workerId]);
+      last_error_code=$2,updated_at=$3,job_json=job_json || jsonb_build_object('status','QUEUED','runAt',$6::text,
+      'workerId',NULL,'leaseExpiresAt',NULL,'lastErrorCode',$2,'updatedAt',$7::text) WHERE id=$4 AND worker_id=$5 AND status='LEASED'`,
+      [runAt.toISOString(), errorCode, now.toISOString(), jobId, workerId, runAt.toISOString(), now.toISOString()]);
     if (result.rowCount !== 1) throw new Error("AGENT_JOB_LEASE_LOST");
   }
   async failJob(jobId: string, workerId: string, errorCode: string, now: Date) { await this.pgFinishJob(jobId, workerId, "FAILED", errorCode, now); }
@@ -1047,8 +1048,8 @@ export class PostgresAgentRepository implements AgentRepository {
   private async pgFinishJob(jobId: string, workerId: string, status: "COMPLETED" | "FAILED", errorCode: string | null, now: Date) {
     const result = await this.pool.query(`UPDATE agent_jobs SET status=$1,worker_id=NULL,lease_expires_at=NULL,last_error_code=$2,
       updated_at=$3,job_json=job_json || jsonb_build_object('status',$1,'workerId',NULL,'leaseExpiresAt',NULL,
-      'lastErrorCode',$2,'updatedAt',$3::text) WHERE id=$4 AND worker_id=$5 AND status='LEASED'`,
-      [status, errorCode, now.toISOString(), jobId, workerId]);
+      'lastErrorCode',$2,'updatedAt',$6::text) WHERE id=$4 AND worker_id=$5 AND status='LEASED'`,
+      [status, errorCode, now.toISOString(), jobId, workerId, now.toISOString()]);
     if (result.rowCount !== 1) throw new Error("AGENT_JOB_LEASE_LOST");
   }
   private async rollback(client: PoolClient) { try { await client.query("ROLLBACK"); } catch { /* discard unusable connection */ } }

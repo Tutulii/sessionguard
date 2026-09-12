@@ -215,7 +215,9 @@ export async function createProductionWorker(options: ProductionWorkerOptions = 
     const [database, agentDatabase, redis] = await Promise.all([repository.ready(), agentRepository.ready(), coordinator.ready()]);
     const heartbeatRecent = lastHeartbeatAt !== null && Date.now() - new Date(lastHeartbeatAt).getTime() < 15_000;
     const tickStalled = activeTickStartedAt !== null && Date.now() - new Date(activeTickStartedAt).getTime() >= 180_000;
-    const recent = heartbeatRecent && !tickStalled;
+    const completedRecently = lastSuccessfulTickAt !== null
+      && Date.now() - new Date(lastSuccessfulTickAt).getTime() < 30_000;
+    const recent = heartbeatRecent && !tickStalled && (activeTickStartedAt !== null || completedRecently);
     return { ok: database && agentDatabase && redis && recent && !stopped, database, agentDatabase, redis, recent,
       heartbeatRecent, tickStalled, lastHeartbeatAt, activeTickStartedAt, lastSuccessfulTickAt, agentRuntime: runtimeEnabled };
   }
