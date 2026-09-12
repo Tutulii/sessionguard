@@ -50,9 +50,9 @@ The original hackathon prototype and its audit remain recorded in `IMPLEMENTATIO
 
 - Roadmap-to-code comparison: **11/11 AI-agent plan sections mapped; zero unresolved implementation gaps.**
 - Dedupe acceptance: one decision for unchanged official/replay content, amended content may create one new decision, and collateral alerts re-fire only on a worse band or a recovered-and-rearmed episode.
-- Risk-sizing acceptance: every amended requirement maps to code/UI/tests in `AI_AGENT_PRODUCTION_AUDIT.md`; the final local `npm run check` passes 247 tests plus two explicit external-infrastructure skips, zero dependency vulnerabilities, both security scans, and the production build.
-- Release evidence: GitHub production-gates run `34659806453` passed 249 tests, 20 desktop/mobile Chromium journeys, PostgreSQL/Redis integration, the production container build, and a Trivy scan with zero high or critical findings.
-- Deployment evidence: Fly release v2 is complete at `https://sessionguard-demo.fly.dev`; one web and one worker Machine in Singapore pass PostgreSQL, agent-database, Redis, paper-only, and agent-runtime health checks. The public synthetic replay smoke passed in 355 ms.
+- Risk-sizing acceptance: every amended requirement maps to code/UI/tests in `AI_AGENT_PRODUCTION_AUDIT.md`; the final local `npm run check` passes 249 tests plus two explicit external-infrastructure skips, zero dependency vulnerabilities, both security scans, and the production build.
+- Release evidence: GitHub production-gates run `34687724587` passed 249 tests, 20 desktop/mobile Chromium journeys, PostgreSQL/Redis integration, the production container build, and a Trivy scan with zero high or critical findings.
+- Deployment evidence: Fly release v4 is complete at `https://sessionguard-demo.fly.dev`; one web and one worker Machine in Singapore pass PostgreSQL, agent-database, Redis, paper-only, and agent-runtime health checks. PostgreSQL has 1 GB RAM and a 10 GB encrypted volume; migration `0004-canonical-job-timestamps` repaired legacy queued-job timestamps. Multiple real worker ticks completed and the public synthetic replay smoke passed in 608 ms.
 - Immutable legacy rows are retained in exports and grouped only in the visible agent tape.
 
 ## Status

@@ -18,14 +18,14 @@ This verdict covers the deliberately narrow code and delivery scope: Bitget-only
 | Secret-pattern scan | Passed |
 | Dependency audit | `found 0 vulnerabilities` |
 | Production Vite/server build | Passed; main client entry 299.74 kB / 92.50 kB gzip |
-| PostgreSQL 18 migration | Runtime migrations `0001`, `0002`, and `0003` applied and were verified on PostgreSQL 18 |
+| PostgreSQL 18 migration | Runtime migrations through `0004-canonical-job-timestamps` applied and were verified on PostgreSQL 18 |
 | PostgreSQL audit protection | `audit_events_immutable` trigger present and tested against update/delete |
 | Redis 8 production contracts | Sessions, atomic consume, locks, rate/cache, pub/sub, and leased jobs passed |
 | Live provider smoke | Real Bitget public endpoint returned rNVDA ticker, bid/ask, cash-session anchor, freshness, and chart through `ProductionMarketService` |
 | Synthetic API smoke | Health, replay snapshot, Sunday block, cash-open permission, and local simulation passed |
 | Fly configuration | `flyctl config validate --strict` passed |
-| Container build and high/critical scan | Production image built and Trivy reported **0 high / 0 critical** in CI run `34659806453` |
-| Authorized Fly hackathon deployment | Release v2 complete; one web and one worker Machine healthy in `sin`; PostgreSQL, agent database, Redis, paper-only boundary, agent runtime, HTTPS, DNS, and public synthetic replay smoke passed |
+| Container build and high/critical scan | Production image built and Trivy reported **0 high / 0 critical** in CI run `34687724587` |
+| Authorized Fly hackathon deployment | Release v4 complete; one web and one worker Machine healthy in `sin`; PostgreSQL (1 GB RAM, 10 GB encrypted volume), agent database, Redis, paper-only boundary, bounded worker heartbeat, agent runtime, HTTPS, DNS, and public synthetic replay smoke passed |
 
 ## Requirement-to-implementation comparison
 
