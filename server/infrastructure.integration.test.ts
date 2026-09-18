@@ -1,6 +1,8 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { defaultUserPolicy, supportedSymbols, type PaperOrderReceiptV1 } from "../shared/production-types.js";
+import { AgentJobV1Schema } from "../shared/agent-types.js";
+import { PostgresAgentRepository } from "./agent-repository.js";
 import { createSessionRecord } from "./coordinator-contract.js";
 import { PostgresPlatformRepository } from "./postgres-repository.js";
 import { RedisCoordinator } from "./redis-coordinator.js";
@@ -80,5 +82,21 @@ describe.skipIf(!databaseUrl || !redisUrl)("managed-infrastructure contracts", (
       expect(await redis.claimNotification(new Date(now.getTime() + 60_000))).toEqual(job);
       await redis.completeNotification(job.id);
     } finally { await redis.close(); }
+  });
+  it("completes a PostgreSQL job with no error code instead of leaving it leased", async () => {
+    const repository = new PostgresAgentRepository(databaseUrl!); await repository.init();
+    const at = new Date();
+    const job = AgentJobV1Schema.parse({ id: randomUUID(), runId: randomUUID(), userId: randomUUID(),
+      kind: "PROCESS_RUN", status: "QUEUED", runAt: at.toISOString(), attemptCount: 0, workerId: null,
+      leaseExpiresAt: null, lastErrorCode: null, createdAt: at.toISOString(), updatedAt: at.toISOString() });
+    try {
+      await repository.enqueueJob(job);
+      expect(await repository.claimJob("integration-worker", at, 60_000)).toMatchObject({ id: job.id, status: "LEASED" });
+      await expect(repository.completeJob(job.id, "integration-worker", at)).resolves.toBeUndefined();
+      expect(await repository.queueStats(at)).toMatchObject({ runnable: 0, leased: 0 });
+    } finally {
+      await repository.pool.query("DELETE FROM agent_jobs WHERE id=$1", [job.id]);
+      await repository.close();
+    }
   });
 });

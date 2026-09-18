@@ -1047,8 +1047,8 @@ export class PostgresAgentRepository implements AgentRepository {
   }
   private async pgFinishJob(jobId: string, workerId: string, status: "COMPLETED" | "FAILED", errorCode: string | null, now: Date) {
     const result = await this.pool.query(`UPDATE agent_jobs SET status=$1,worker_id=NULL,lease_expires_at=NULL,last_error_code=$2,
-      updated_at=$3,job_json=job_json || jsonb_build_object('status',$1,'workerId',NULL,'leaseExpiresAt',NULL,
-      'lastErrorCode',$2,'updatedAt',$6::text) WHERE id=$4 AND worker_id=$5 AND status='LEASED'`,
+      updated_at=$3,job_json=job_json || jsonb_build_object('status',$1::text,'workerId',NULL,'leaseExpiresAt',NULL,
+      'lastErrorCode',$2::text,'updatedAt',$6::text) WHERE id=$4 AND worker_id=$5 AND status='LEASED'`,
       [status, errorCode, now.toISOString(), jobId, workerId, now.toISOString()]);
     if (result.rowCount !== 1) throw new Error("AGENT_JOB_LEASE_LOST");
   }
