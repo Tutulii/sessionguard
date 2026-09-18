@@ -386,6 +386,7 @@ export const AgentOutcomeV1Schema = z.object({
   collateralBufferChangePct: z.number().nullable(),
   eventSuperseded: z.boolean(),
   observationDueAt: z.string().datetime(),
+  cashCloseDueAt: z.string().datetime().optional(),
   scoredAt: z.string().datetime().nullable(),
   label: z.string().min(1).max(200),
 }).strict();

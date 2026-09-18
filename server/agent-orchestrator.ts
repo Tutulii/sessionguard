@@ -493,13 +493,15 @@ export class AgentOrchestrator {
     }
     const start = replayOutcomeDelayMs > 0 ? new Date(now.getTime() + replayOutcomeDelayMs)
       : run.context.market.session === "CASH_OPEN" ? now : new Date(run.context.market.nextCashOpen);
+    const cashCloseDueAt = run.sourceMode === "LOCAL_REPLAY" ? start
+      : cashCloseForDate(start);
     const outcome = AgentOutcomeV1Schema.parse({ version: 1, id: randomUUID(), runId: run.id, userId: run.userId,
       symbol: run.symbol, status: "PENDING", decisionPriceMicros: run.context.market.rTokenPriceMicros,
       proposedNotionalCents: run.assessment.proposedNotionalCents, allowedNotionalCents: run.authorization.allowedNotionalCents,
       nextOpenPriceMicros: null, plus60mPriceMicros: null, cashClosePriceMicros: null,
       observationSources: { nextOpen: null, plus60m: null, cashClose: null }, pnlCents: null,
       mfeBps: null, maeBps: null, collateralBufferChangePct: null, eventSuperseded: false,
-      observationDueAt: start.toISOString(), scoredAt: null, label: replayOutcomeDelayMs > 0
+      observationDueAt: start.toISOString(), cashCloseDueAt: cashCloseDueAt.toISOString(), scoredAt: null, label: replayOutcomeDelayMs > 0
         ? "Local replay scheduler test waiting for its disclosed delay." : "Waiting for Bitget-only observation windows." });
     await this.options.repository.saveOutcome(outcome);
     const pending = await this.transition(run, "OUTCOME_PENDING", "OUTCOME_MONITORING_SCHEDULED");
@@ -510,7 +512,7 @@ export class AgentOrchestrator {
         workerId: null, leaseExpiresAt: null, lastErrorCode: null, createdAt: now.toISOString(), updatedAt: now.toISOString() }));
       return;
     }
-    const close = cashCloseForDate(start); const jobs: Array<[AgentJobV1["kind"], Date]> = [
+    const close = cashCloseDueAt; const jobs: Array<[AgentJobV1["kind"], Date]> = [
       ["OUTCOME_NEXT_OPEN", new Date(start.getTime() + 5_000)], ["OUTCOME_60M", new Date(start.getTime() + 60 * 60_000)],
       ["OUTCOME_CLOSE", new Date(close.getTime() + 5_000)],
     ];

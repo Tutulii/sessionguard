@@ -43,7 +43,7 @@ function outcomeProgressSummary(outcome: AgentOutcomeV1) {
   if (outcome.nextOpenPriceMicros === null) return `next-open check due ${shortTime(outcome.observationDueAt)}`;
   const plus60DueAt = new Date(new Date(outcome.observationDueAt).getTime() + 60 * 60_000).toISOString();
   if (outcome.plus60mPriceMicros === null) return `next-open captured · +60-minute check due ${shortTime(plus60DueAt)}`;
-  if (outcome.cashClosePriceMicros === null) return "next-open and +60-minute captured · cash-close check queued";
+  if (outcome.cashClosePriceMicros === null) return `next-open and +60-minute captured · cash-close check due ${shortTime(cashCloseDeadline(outcome))}`;
   return "all observation checkpoints captured · final scoring queued";
 }
 
@@ -171,7 +171,7 @@ function RunDrawer({ run, onClose }: { run: AgentRunDetail; onClose: () => void 
       ? `NEXT-OPEN PRICE CHECK DUE · ${shortTime(run.outcome.observationDueAt)}`
       : run.outcome.plus60mPriceMicros === null
         ? `+60-MINUTE PRICE CHECK DUE · ${shortTime(new Date(new Date(run.outcome.observationDueAt).getTime() + 60 * 60_000).toISOString())}`
-        : "CASH-CLOSE PRICE CHECK QUEUED";
+        : `CASH-CLOSE PRICE CHECK DUE · ${shortTime(cashCloseDeadline(run.outcome))}`;
   return <motion.div className="agent-overlay drawer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <motion.aside ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="run-detail-title" className="agent-run-drawer" initial={{ x: 40 }} animate={{ x: 0 }} exit={{ x: 40 }}>
       <button className="agent-close" aria-label="Close run detail" onClick={onClose}><X/></button><span className="agent-kicker">TRACE {run.traceId.slice(0, 8)}</span><h2 id="run-detail-title">{symbolMetadata[run.symbol].displaySymbol} · {stateLabel(run.state)}</h2>
@@ -181,7 +181,7 @@ function RunDrawer({ run, onClose }: { run: AgentRunDetail; onClose: () => void 
       <section className="agent-detail-section"><h3>Deterministic permission</h3>{run.authorization ? <><div className={`agent-verdict tone-${run.authorization.permission === "BLOCK" ? "block" : run.authorization.permission === "ALERT_ONLY" ? "warn" : "good"}`}><strong>{run.authorization.permission}</strong><span>Allowed {money(run.authorization.allowedNotionalCents)}</span></div>{run.authorization.sizing && <RiskSizingCard sizing={run.authorization.sizing} side={run.authorization.side}/>} {run.authorization.reasonCodes.map((code, index) => <p className="agent-rule" key={code}><ShieldCheck/><span><strong>{code}</strong>{run.authorization!.reasons[index] ?? "Deterministic policy applied."}</span></p>)}</> : run.state === "FAILED_CLOSED" ? <p><strong>Failed closed: {stateLabel(run.failureCode ?? "UNKNOWN ERROR")}</strong> · No trade permission or adapter capability was issued.</p> : <p>Authorization has not reached a persisted result.</p>}</section>
       <section className="agent-detail-section"><h3>Receipt</h3><p>{run.receipt ? `${run.receipt.executionMode} · ${run.receipt.status} · ${run.receipt.message}` : run.sourceMode === "LOCAL_REPLAY" ? "No order receipt. Local replays are shadow-only and cannot enter the Bitget Demo adapter." : run.modeAtStart !== "PAPER_AUTO" ? "No order receipt. Shadow and Alert Only modes never issue an adapter capability." : "No order receipt. No adapter capability was issued."}</p></section>
       <section className="agent-detail-section"><h3>Transition timeline</h3><ol className="agent-trace">{run.transitions.map((item) => <li key={item.id}><i/><span><strong>{stateLabel(item.toState)}</strong><small>{item.reasonCode}</small><em>{transitionTime(item.reasonCode, item.createdAt)}</em></span></li>)}</ol></section>
-      {run.outcome && <section className="agent-detail-section"><h3>Outcome monitoring</h3><div className="agent-monitoring-card"><Clock3/><span><small>{run.outcome.status === "PENDING" ? "OBSERVATION IN PROGRESS" : stateLabel(run.outcome.status)}</small><strong>{nextOutcomeCheck ?? `SCORED · ${shortTime(run.outcome.scoredAt)}`}</strong></span></div>{run.outcome.status === "PENDING" && <dl className="agent-monitoring-times"><div><dt>SCHEDULE REGISTERED</dt><dd>{shortTime(monitoringScheduledAt)}</dd></div><div><dt>NEXT OPEN</dt><dd>{run.outcome.nextOpenPriceMicros === null ? `Due ${shortTime(run.outcome.observationDueAt)}` : `Captured · ${shortTime(run.outcome.observationDueAt)}`}</dd></div><div><dt>+60 MINUTES</dt><dd>{run.outcome.plus60mPriceMicros === null ? `Due ${shortTime(new Date(new Date(run.outcome.observationDueAt).getTime() + 60 * 60_000).toISOString())}` : "Captured"}</dd></div><div><dt>CASH CLOSE</dt><dd>{run.outcome.cashClosePriceMicros === null ? "Queued" : "Captured"}</dd></div></dl>}<p>{run.outcome.status === "PENDING"
+      {run.outcome && <section className="agent-detail-section"><h3>Outcome monitoring</h3><div className="agent-monitoring-card"><Clock3/><span><small>{run.outcome.status === "PENDING" ? "OBSERVATION IN PROGRESS" : stateLabel(run.outcome.status)}</small><strong>{nextOutcomeCheck ?? `SCORED · ${shortTime(run.outcome.scoredAt)}`}</strong></span></div>{run.outcome.status === "PENDING" && <dl className="agent-monitoring-times"><div><dt>SCHEDULE REGISTERED</dt><dd>{shortTime(monitoringScheduledAt)}</dd></div><div><dt>NEXT OPEN</dt><dd>{run.outcome.nextOpenPriceMicros === null ? `Due ${shortTime(run.outcome.observationDueAt)}` : `Captured · ${shortTime(run.outcome.observationDueAt)}`}</dd></div><div><dt>+60 MINUTES</dt><dd>{run.outcome.plus60mPriceMicros === null ? `Due ${shortTime(new Date(new Date(run.outcome.observationDueAt).getTime() + 60 * 60_000).toISOString())}` : "Captured"}</dd></div><div><dt>CASH CLOSE</dt><dd>{run.outcome.cashClosePriceMicros === null ? `Due ${shortTime(cashCloseDeadline(run.outcome))}` : "Captured"}</dd></div></dl>}<p>{run.outcome.status === "PENDING"
         ? "A pending outcome is not stuck: SessionGuard keeps it open until the required Bitget next-open, +60-minute, and cash-close observations have been captured."
         : run.outcome.label}</p><small className="agent-observation-origin">OBSERVATION SOURCE · {observationSourceSummary(run.outcome)}</small></section>}
     </motion.aside>
@@ -320,4 +320,8 @@ export function AgentPage() {
     <AnimatePresence>{showGrant && settings && user && <GrantReview settings={settings} address={user.address} busy={busy} onClose={() => setShowGrant(false)} onSigned={() => { setShowGrant(false); void load(); setNotice("PAPER_AUTO grant verified for exactly seven days."); }}/>}</AnimatePresence>
     <AnimatePresence>{selectedRun && <RunDrawer run={selectedRun} onClose={() => setSelectedRun(null)}/>}</AnimatePresence>
   </motion.div>;
+}
+
+function cashCloseDeadline(outcome: AgentOutcomeV1) {
+  return outcome.cashCloseDueAt ?? new Date(new Date(outcome.observationDueAt).getTime() + 6.5 * 60 * 60_000).toISOString();
 }
