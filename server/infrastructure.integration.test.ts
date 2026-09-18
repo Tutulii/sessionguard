@@ -85,8 +85,16 @@ describe.skipIf(!databaseUrl || !redisUrl)("managed-infrastructure contracts", (
   });
   it("completes a PostgreSQL job with no error code instead of leaving it leased", async () => {
     const repository = new PostgresAgentRepository(databaseUrl!); await repository.init();
-    const at = new Date();
-    const job = AgentJobV1Schema.parse({ id: randomUUID(), runId: randomUUID(), userId: randomUUID(),
+    const platform = new PostgresPlatformRepository(databaseUrl!); await platform.init();
+    const user = await platform.createOrLoginUser(`0x${randomBytes(20).toString("hex")}`, 42161);
+    const at = new Date(); const triggerId = randomUUID(); const runId = randomUUID();
+    await repository.pool.query(`INSERT INTO agent_triggers(id,user_id,event_id,symbol,trigger_type,source_mode,dedupe_key,trigger_json,created_at)
+      VALUES($1,$2,NULL,'RNVDAUSDT','MANUAL_SHADOW','LIVE_BITGET',$3,$4,$5)`,
+    [triggerId, user.id, randomUUID(), {}, at.toISOString()]);
+    await repository.pool.query(`INSERT INTO agent_runs(id,trace_id,trigger_id,user_id,event_id,symbol,source_mode,mode_at_start,state,qualifying_shadow_run,run_json,created_at,updated_at,terminal_at)
+      VALUES($1,$2,$3,$4,NULL,'RNVDAUSDT','LIVE_BITGET','SHADOW','QUEUED',false,$5,$6,$6,NULL)`,
+    [runId, randomUUID(), triggerId, user.id, {}, at.toISOString()]);
+    const job = AgentJobV1Schema.parse({ id: randomUUID(), runId, userId: user.id,
       kind: "PROCESS_RUN", status: "QUEUED", runAt: at.toISOString(), attemptCount: 0, workerId: null,
       leaseExpiresAt: null, lastErrorCode: null, createdAt: at.toISOString(), updatedAt: at.toISOString() });
     try {
@@ -97,6 +105,7 @@ describe.skipIf(!databaseUrl || !redisUrl)("managed-infrastructure contracts", (
     } finally {
       await repository.pool.query("DELETE FROM agent_jobs WHERE id=$1", [job.id]);
       await repository.close();
+      await platform.deleteUser(user.id); await platform.close();
     }
   });
 });
