@@ -123,17 +123,20 @@ describe("durable agent orchestrator", () => {
       observationSources: { nextOpen: "BITGET_COMPLETED_1M_CANDLE", plus60m: "BITGET_COMPLETED_1M_CANDLE" } });
   });
 
-  it("deduplicates an exact local replay and reports the skipped duplicate", async () => {
+  it("runs one replay per analyst and deduplicates an exact analyst replay", async () => {
     const env = await runtime(new Date("2026-09-15T15:06:00.000Z"));
     const first = await env.orchestrator.replay(env.user.id, "sunday-oracle", "RECORDED");
     const stored = await env.orchestrator.settings(env.user.id);
     await env.agent.saveSettings({ ...stored!, policyVersion: "agent-policy-next", settingsVersion: "settings-next" });
-    const duplicate = await env.orchestrator.replay(env.user.id, "sunday-oracle", "QWEN");
+    const qwen = await env.orchestrator.replay(env.user.id, "sunday-oracle", "QWEN");
+    const duplicate = await env.orchestrator.replay(env.user.id, "sunday-oracle", "RECORDED");
     expect(first.dedupeStatus).toBe("QUEUED");
+    expect(qwen.dedupeStatus).toBe("QUEUED");
+    expect(qwen.id).not.toBe(first.id);
     expect(duplicate.dedupeStatus).toBe("SKIPPED_DUPLICATE");
     expect(duplicate.id).toBe(first.id);
-    expect((await env.agent.listRuns(env.user.id, 10)).items).toHaveLength(1);
-    expect(await env.agent.queueStats(new Date("2026-09-15T15:06:00.000Z"))).toMatchObject({ runnable: 1 });
+    expect((await env.agent.listRuns(env.user.id, 10)).items).toHaveLength(2);
+    expect(await env.agent.queueStats(new Date("2026-09-15T15:06:00.000Z"))).toMatchObject({ runnable: 2 });
   });
 
   it("deduplicates one official event per user/content even across policy revisions", async () => {

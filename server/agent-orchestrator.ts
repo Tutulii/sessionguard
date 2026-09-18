@@ -282,7 +282,11 @@ export class AgentOrchestrator {
       const trigger = previous.context?.trigger ?? await this.options.repository.getTrigger(userId, previous.triggerId);
       const previousHash = previous.context?.event?.contentHash ??
         (typeof trigger?.facts.contentHash === "string" ? trigger.facts.contentHash : null);
-      if (trigger?.replayId === replayId && (!previousHash || previousHash === event.contentHash)) {
+      // A recorded fixture and a live-Qwen assessment are deliberately different
+      // demo paths. Each one gets one durable run for a given fixture version;
+      // clicking that same analyst again remains an exact duplicate.
+      if (trigger?.replayId === replayId && previous.analystOrigin === analystOrigin && previous.state !== "FAILED_CLOSED" &&
+        (!previousHash || previousHash === event.contentHash)) {
         this.options.telemetry?.agentDedupe.inc();
         return { ...previous, dedupeStatus: "SKIPPED_DUPLICATE" as const };
       }
@@ -290,7 +294,7 @@ export class AgentOrchestrator {
     const result = await this.createRun({ settings, type: "OFFICIAL_EVENT", symbol: scenario.snapshot.symbol, event,
       sourceMode: "LOCAL_REPLAY", analystOrigin, facts: { replayId, contentHash: event.contentHash,
         source: "RECORDED_OFFICIAL_FIXTURE", simulation: true },
-      dedupeSeed: `replay:${event.accessionId}:${event.contentHash}`, dedupeScope: "EVENT", replayId });
+      dedupeSeed: `replay:v2:${analystOrigin}:${event.accessionId}:${event.contentHash}`, dedupeScope: "EVENT", replayId });
     return { ...result.run, dedupeStatus: result.created ? "QUEUED" as const : "SKIPPED_DUPLICATE" as const };
   }
 

@@ -168,20 +168,26 @@ describe("production v1 API", () => {
     expect(replayedToken.json().order.id).toBe(submitted.json().order.id);
   });
 
-  it("returns SKIPPED_DUPLICATE and keeps one run for an exact agent replay", async () => {
+  it("runs each replay analyst once and skips an exact analyst replay", async () => {
     const { cookie } = await authenticate(app);
     const first = await app.inject({ method: "POST", url: "/api/v1/agent/replays/sunday-oracle",
       headers: { ...mutationHeaders, cookie }, payload: { analyst: "RECORDED" } });
     expect(first.statusCode).toBe(202);
     expect(first.json()).toMatchObject({ status: "QUEUED", run: { sourceMode: "LOCAL_REPLAY" } });
 
-    const duplicate = await app.inject({ method: "POST", url: "/api/v1/agent/replays/sunday-oracle",
+    const qwen = await app.inject({ method: "POST", url: "/api/v1/agent/replays/sunday-oracle",
       headers: { ...mutationHeaders, cookie }, payload: { analyst: "QWEN" } });
+    expect(qwen.statusCode).toBe(202);
+    expect(qwen.json()).toMatchObject({ status: "QUEUED", run: { sourceMode: "LOCAL_REPLAY" } });
+    expect(qwen.json().run.id).not.toBe(first.json().run.id);
+
+    const duplicate = await app.inject({ method: "POST", url: "/api/v1/agent/replays/sunday-oracle",
+      headers: { ...mutationHeaders, cookie }, payload: { analyst: "RECORDED" } });
     expect(duplicate.statusCode).toBe(200);
     expect(duplicate.json()).toMatchObject({ status: "SKIPPED_DUPLICATE", run: { id: first.json().run.id } });
 
     const runs = await app.inject({ method: "GET", url: "/api/v1/agent/runs", headers: { cookie } });
-    expect(runs.json().items).toHaveLength(1);
+    expect(runs.json().items).toHaveLength(2);
   });
 
   it("stores only an encrypted Demo envelope and isolates every tenant", async () => {

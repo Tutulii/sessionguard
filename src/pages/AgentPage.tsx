@@ -255,10 +255,15 @@ export function AgentPage() {
   };
   const chooseMode = (mode: "DISABLED" | "SHADOW" | "ALERT_ONLY") => void act(() => save(mode), `${stateLabel(mode)} mode saved.`);
   const runReplay = (id: string, analyst: "RECORDED" | "QWEN") => void act(
-    () => productionApi.agentReplay(id, analyst),
+    async () => {
+      const result = await productionApi.agentReplay(id, analyst);
+      setSelectedRun((await productionApi.agentRun(result.run.id)).run);
+      window.requestAnimationFrame(() => document.getElementById("runs")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+      return result;
+    },
     (result) => result.status === "SKIPPED_DUPLICATE"
-      ? "SKIPPED DUPLICATE · This exact replay event already has one decision."
-      : `${analyst === "RECORDED" ? "Recorded" : "Live-Qwen"} replay queued.`,
+      ? `Already opened the existing ${analyst === "RECORDED" ? "recorded" : "Live-Qwen"} receipt — one decision per fixture and analyst.`
+      : `${analyst === "RECORDED" ? "Recorded" : "Live-Qwen"} replay queued. Its receipt is now open below.`,
   );
   const openRun = async (run: AgentRunV1) => { setBusy(true); try { setSelectedRun((await productionApi.agentRun(run.id)).run); } catch (caught) { setError(caught instanceof Error ? caught.message : "Run unavailable"); } finally { setBusy(false); } };
   const toggleSymbol = (symbol: ProductionSymbol) => {
