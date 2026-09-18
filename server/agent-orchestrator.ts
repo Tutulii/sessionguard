@@ -485,6 +485,25 @@ export class AgentOrchestrator {
   private async ensureOutcome(run: AgentRunV1) {
     if (!run.context || !run.assessment || !run.authorization) throw new Error("OUTCOME_INPUT_MISSING");
     const now = this.now(); const existing = await this.options.repository.getOutcome(run.id, run.userId);
+    // A refused or no-action proposal opens no position. Monitoring later prices
+    // cannot produce a truthful P&L, so record the final decision immediately.
+    if (run.sourceMode === "LIVE_BITGET" && !run.receipt && run.authorization.allowedNotionalCents === 0) {
+      const outcome = existing ?? AgentOutcomeV1Schema.parse({ version: 1, id: randomUUID(), runId: run.id, userId: run.userId,
+        symbol: run.symbol, status: "NEUTRAL", decisionPriceMicros: run.context.market.rTokenPriceMicros,
+        proposedNotionalCents: run.assessment.proposedNotionalCents, allowedNotionalCents: 0,
+        nextOpenPriceMicros: null, plus60mPriceMicros: null, cashClosePriceMicros: null,
+        observationSources: { nextOpen: null, plus60m: null, cashClose: null }, pnlCents: 0,
+        mfeBps: null, maeBps: null, collateralBufferChangePct: null, eventSuperseded: false,
+        observationDueAt: now.toISOString(), cashCloseDueAt: now.toISOString(), scoredAt: now.toISOString(),
+        label: `No position opened: ${run.authorization.reasonCodes[0] ?? "deterministic permission"}. Decision receipt complete.` });
+      const finalized = AgentOutcomeV1Schema.parse({ ...outcome, status: "NEUTRAL", pnlCents: 0, scoredAt: now.toISOString(),
+        label: `No position opened: ${run.authorization.reasonCodes[0] ?? "deterministic permission"}. Decision receipt complete.` });
+      await this.options.repository.saveOutcome(finalized);
+      this.options.telemetry?.agentOutcomes.inc({ status: finalized.status });
+      if (!terminalAgentRunStates.has(run.state)) await this.transition(run, "COMPLETED", "NO_POSITION_OUTCOME_RECORDED");
+      await this.options.coordinator.publish(`agent:${run.userId}`, { type: "OUTCOME", runId: run.id, outcome: finalized });
+      return;
+    }
     const replayOutcomeDelayMs = run.sourceMode === "LOCAL_REPLAY"
       ? Math.max(0, Math.min(this.options.replayOutcomeDelayMs ?? 0, 10 * 60_000)) : 0;
     if (existing) {
