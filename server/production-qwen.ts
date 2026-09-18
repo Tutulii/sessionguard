@@ -20,7 +20,7 @@ export type QwenConfiguration = {
 
 function sha(value: string) { return createHash("sha256").update(value).digest("hex"); }
 function cleanJson(value: string) { return value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, ""); }
-function normalizeModelShape(raw: unknown) {
+function normalizeModelShape(raw: unknown, context?: AgentContextV1) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
   const normalized = { ...(raw as Record<string, unknown>) };
   // Qwen sometimes serializes a single risk as a string despite JSON-mode instructions.
@@ -30,6 +30,21 @@ function normalizeModelShape(raw: unknown) {
   // Qwen occasionally returns an otherwise valid confidence as a human percentage (for
   // example 95 instead of 0.95). Convert only the unambiguous 1..100 numeric form; all
   // other values still pass through the strict 0..1 schema and fail closed when invalid.
+  // The evidence tag exposes both the short stable segment id and its full
+  // SHA-256 hash. Some Qwen versions echo them as one string. Canonicalize
+  // only that exact, supplied form; arbitrary ids remain invalid and fail
+  // closed in validateGroundedAssessment.
+  if (context && Array.isArray(normalized.evidence)) {
+    const canonical = new Map(context.evidence.map((segment) => [
+      `${segment.id}-${segment.hash}`, segment.id,
+    ]));
+    normalized.evidence = normalized.evidence.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+      const segmentId = (item as Record<string, unknown>).segmentId;
+      const resolved = typeof segmentId === "string" ? canonical.get(segmentId) : undefined;
+      return resolved ? { ...(item as Record<string, unknown>), segmentId: resolved } : item;
+    });
+  }
   if (typeof normalized.confidence === "number" && Number.isFinite(normalized.confidence)
     && normalized.confidence > 1 && normalized.confidence <= 100) {
     normalized.confidence /= 100;
@@ -143,7 +158,7 @@ export class ProductionQwenAnalyst {
       let decoded: unknown;
       try { decoded = JSON.parse(cleanJson(content)); } catch { throw new Error("MODEL_OUTPUT_INVALID_JSON"); }
       let assessment: AgentAssessmentV1;
-      try { assessment = validateGroundedAssessment(context, normalizeModelShape(decoded)); }
+      try { assessment = validateGroundedAssessment(context, normalizeModelShape(decoded, context)); }
       catch (error) { throw new Error(`MODEL_OUTPUT_INVALID:${error instanceof Error ? error.message : "SCHEMA"}`); }
       const at = new Date().toISOString(); this.lastSuccessAt = at; this.consecutiveFailures = 0;
       return { assessment, metadata: {

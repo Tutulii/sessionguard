@@ -66,6 +66,18 @@ describe("constrained production Qwen analyst", () => {
     await expect(analyst.assess(testContext())).resolves.toMatchObject({ assessment: { confidence: 0.95 } });
   });
 
+  it("canonicalizes only the exact segment-id plus supplied hash Qwen echo", async () => {
+    const context = testContext();
+    const segment = context.evidence[0];
+    const assessment = testAssessment({ evidence: [{ claim: "Supported by the filing.", segmentId: `${segment.id}-${segment.hash}` }] });
+    const fetcher = vi.fn(async () => modelResponse(assessment));
+    const analyst = new ProductionQwenAnalyst({ apiKey: "k", baseUrl: "https://qwen.test", model: "q", promptVersion: "p" }, fetcher as typeof fetch);
+    await expect(analyst.assess(context)).resolves.toMatchObject({ assessment: { evidence: [{ segmentId: segment.id }] } });
+    const forged = { ...assessment, evidence: [{ claim: "forged", segmentId: `${segment.id}-${"0".repeat(64)}` }] };
+    const forgedFetcher = vi.fn(async () => modelResponse(forged));
+    await expect(new ProductionQwenAnalyst({ apiKey: "k", baseUrl: "https://qwen.test", model: "q", promptVersion: "p" }, forgedFetcher as typeof fetch).assess(context)).rejects.toThrow("MODEL_OUTPUT_INVALID");
+  });
+
   it("retries exactly once for 429/5xx or transport failure", async () => {
     const assessment = testAssessment();
     for (const first of [() => modelResponse({ error: "busy" }, 429), () => modelResponse({ error: "down" }, 503), () => Promise.reject(new Error("socket"))]) {
