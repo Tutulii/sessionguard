@@ -147,7 +147,12 @@ function GrantReview({ settings, address, busy, onClose, onSigned }: { settings:
     setError(""); setSigning(true);
     try { await signAgentGrant({ symbols: settings.symbols, actions: ["BUY", "REDUCE"], automaticOrderLimitCents: settings.automaticOrderLimitCents,
       automaticOrdersPerDay: settings.automaticOrdersPerDay, automaticGrossNewNotionalCents: settings.automaticGrossNewNotionalCents }, address); onSigned(); }
-    catch (caught) { setError(caught instanceof Error ? caught.message : "Grant signature failed"); }
+    catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Grant signature failed";
+      setError(message.includes("invalid_format") || message.startsWith("[{")
+        ? "Paper Auto could not be activated. Please sign a fresh scope once more."
+        : message);
+    }
     finally { setSigning(false); }
   };
   return <motion.div className="agent-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>

@@ -767,8 +767,8 @@ export class PostgresAgentRepository implements AgentRepository {
   }
   async consumeGrantChallenge(id: string, userId: string, now: Date) {
     const result = await this.pool.query(`UPDATE agent_grant_challenges SET consumed_at=$3,
-      challenge_json=jsonb_set(challenge_json,'{consumedAt}',to_jsonb($3::text)) WHERE id=$1 AND user_id=$2
-      AND consumed_at IS NULL AND expires_at>$3 RETURNING challenge_json`, [id, userId, now.toISOString()]);
+      challenge_json=jsonb_set(challenge_json,'{consumedAt}',to_jsonb($4::text)) WHERE id=$1 AND user_id=$2
+      AND consumed_at IS NULL AND expires_at>$3 RETURNING challenge_json`, [id, userId, now.toISOString(), now.toISOString()]);
     return result.rows[0] ? AgentGrantChallengeSchema.parse(parse(result.rows[0].challenge_json)) : null;
   }
   async saveGrant(grant: AgentGrantV1) {

@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { defaultUserPolicy, supportedSymbols, type PaperOrderReceiptV1 } from "../shared/production-types.js";
-import { AgentJobV1Schema } from "../shared/agent-types.js";
+import { AgentGrantChallengeSchema, AgentJobV1Schema } from "../shared/agent-types.js";
 import { PostgresAgentRepository } from "./agent-repository.js";
 import { createSessionRecord } from "./coordinator-contract.js";
 import { PostgresPlatformRepository } from "./postgres-repository.js";
@@ -104,6 +104,28 @@ describe.skipIf(!databaseUrl || !redisUrl)("managed-infrastructure contracts", (
       expect(await repository.queueStats(at)).toMatchObject({ runnable: 0, leased: 0 });
     } finally {
       await repository.pool.query("DELETE FROM agent_jobs WHERE id=$1", [job.id]);
+      await repository.close();
+      await platform.deleteUser(user.id); await platform.close();
+    }
+  });
+  it("preserves ISO timestamps when PostgreSQL consumes a grant challenge", async () => {
+    const repository = new PostgresAgentRepository(databaseUrl!); await repository.init();
+    const platform = new PostgresPlatformRepository(databaseUrl!); await platform.init();
+    const user = await platform.createOrLoginUser(`0x${randomBytes(20).toString("hex")}`, 42161);
+    const createdAt = new Date(); const consumedAt = new Date(createdAt.getTime() + 1_000);
+    const challenge = AgentGrantChallengeSchema.parse({ id: randomUUID(), userId: user.id,
+      nonce: randomBytes(8).toString("hex"), message: "SessionGuard integration grant message ".repeat(2),
+      scopeHash: randomBytes(32).toString("hex"), scope: { symbols: ["RNVDAUSDT"], actions: ["BUY"],
+        automaticOrderLimitCents: 10_000, automaticOrdersPerDay: 5, automaticGrossNewNotionalCents: 50_000 },
+      grantExpiresAt: new Date(createdAt.getTime() + 7 * 86_400_000).toISOString(),
+      expiresAt: new Date(createdAt.getTime() + 10 * 60_000).toISOString(), createdAt: createdAt.toISOString(), consumedAt: null });
+    try {
+      await repository.saveGrantChallenge(challenge);
+      const consumed = await repository.consumeGrantChallenge(challenge.id, user.id, consumedAt);
+      expect(consumed?.consumedAt).toBe(consumedAt.toISOString());
+      expect(AgentGrantChallengeSchema.safeParse(consumed).success).toBe(true);
+    } finally {
+      await repository.pool.query("DELETE FROM agent_grant_challenges WHERE id=$1", [challenge.id]);
       await repository.close();
       await platform.deleteUser(user.id); await platform.close();
     }
